@@ -10,8 +10,9 @@ try {
     $payload = Join-Path $temporary "LSFactory-$version-windows-x64"
     $compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
     if (!(Test-Path $compiler)) { throw 'Inno Setup 6 is required to build the installer' }
-    & $compiler "/DAppVersion=$version" "/DPayloadPath=$payload" "/DOutputPath=$output" "$project/packaging/windows/setup.iss"
-    if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed' }
+    $compilerOutput = & $compiler "/DAppVersion=$version" "/DPayloadPath=$payload" "/DOutputPath=$output" "$project/packaging/windows/setup.iss" 2>&1
+    $compilerOutput | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) { throw ("Inno Setup compilation failed: " + ($compilerOutput | Select-Object -Last 12 | Out-String)) }
     $installer = Join-Path $output "LSFactory-$version-windows-x64-Setup.exe"
     if (!(Test-Path $installer)) { throw 'Setup executable was not created' }
     $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -25,6 +26,11 @@ try {
     $uninstaller = Start-Process "$installed/unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
     if ($uninstaller.ExitCode -ne 0) { throw 'Uninstall smoke failed' }
     Write-Host $installer
+} catch {
+    # Public annotations preserve useful failure evidence when CI logs require sign-in.
+    $diagnostic = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+    Write-Output "::error title=Windows installer packaging::$diagnostic"
+    throw
 } finally {
     Remove-Item $temporary -Recurse -Force -ErrorAction SilentlyContinue
 }
