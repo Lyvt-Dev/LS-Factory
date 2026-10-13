@@ -36,8 +36,13 @@ Outcome install(const Options &o)
         return fail("Der Installationspfad darf keine Zeilenumbrueche enthalten.");
     const auto source = o.payloadDirectory.getChildFile("LSFactory.AppImage");
     const auto expected = o.payloadDirectory.getChildFile("payload.sha256").loadFileAsString().trim();
-    if (!source.existsAsFile() || expected.length() != 64 || juce::SHA256(source).toHexString() != expected)
-        return fail("Die Programmdatei fehlt oder ihre SHA-256-Pruefsumme stimmt nicht.");
+    if (!source.existsAsFile())
+        return fail("Die Programmdatei fehlt im Installer: " + source.getFullPathName());
+    if (expected.length() != 64)
+        return fail("Die Pruefsummendatei fehlt oder ist ungueltig: " + o.payloadDirectory.getFullPathName());
+    if (juce::SHA256(source).toHexString() != expected)
+        return fail("Die SHA-256-Pruefsumme der Programmdatei stimmt nicht. Bitte den Installer erneut "
+                    "herunterladen.");
     const auto record = o.destination.getChildFile("installation.json");
     if (o.destination.isSymbolicLink())
         return fail("Der Installationsordner darf kein symbolischer Link sein.");

@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Tutorial.h"
 #include "persistence/BinaryFormat.h"
 #include "persistence/JsonExporter.h"
 #include <algorithm>
@@ -35,11 +36,43 @@ Workspace::Workspace(bool device)
     look_.setColour(juce::TextButton::buttonColourId, raised);
     look_.setColour(juce::TextButton::textColourOffId, ink);
     look_.setColour(juce::TextButton::buttonOnColourId, accent.darker(0.5f));
-    selected_ = project_.patterns.front().id;
+    Pattern initial;
+    initial.id = PatternID{1};
+    project_.patterns.push_back(initial);
+    selected_ = initial.id;
     for (auto *button :
-         {&play_, &stop_, &song_, &loop_, &save_, &open_, &export_, &settings_, &playlist_, &piano_, &mixer_,
-          &rackButton_, &undoButton_, &redoButton_, &midiRecord_, &audioRecord_, &pluginsButton_})
+         {&play_,       &stop_,       &song_,       &loop_,        &save_,          &open_,
+          &export_,     &settings_,   &playlist_,   &piano_,       &mixer_,         &rackButton_,
+          &undoButton_, &redoButton_, &midiRecord_, &audioRecord_, &pluginsButton_, &newProject_,
+          &addTrack_,   &help_,       &layout_,     &fullscreen_})
         addAndMakeVisible(button);
+    newProject_.onClick = [this] { projectMenu(); };
+    addTrack_.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        menu.addItem(1, "Synth");
+        menu.addItem(2, "Kick");
+        menu.addItem(3, "Snare");
+        menu.addItem(4, "Hi-hat");
+        menu.addItem(5, "Sampler");
+        const juce::Component::SafePointer<Workspace> self(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addTrack_),
+                           [self](int choice)
+                           {
+                               if (self && choice > 0)
+                                   self->addTrack(static_cast<InstrumentType>(choice - 1));
+                           });
+    };
+    help_.onClick = [this] { showTutorial(); };
+    layout_.onClick = [this] { resetLayout(); };
+    fullscreen_.onClick = [this]
+    {
+        if (auto *window = findParentComponentOfClass<MainWindow>())
+            window->toggleFullscreen();
+    };
+    newProject_.setTooltip("New empty project or open the demonstration project");
+    addTrack_.setTooltip("Add an instrument and an empty playlist track");
+    layout_.setTooltip("Reset the movable workspace panels");
     play_.onClick = [this] { transportToggle(); };
     stop_.onClick = [this]
     {
@@ -92,7 +125,7 @@ Workspace::Workspace(bool device)
     tempo_.setSliderStyle(juce::Slider::IncDecButtons);
     tempo_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 62, 28);
     tempo_.setRange(20, 400, 0.1);
-    tempo_.setValue(115);
+    tempo_.setValue(120, juce::dontSendNotification);
     tempo_.setColour(juce::Slider::textBoxBackgroundColourId, background);
     tempo_.onValueChange = [this]
     {
@@ -140,9 +173,143 @@ Workspace::Workspace(bool device)
     sync(true);
     startTimerHz(30);
 }
+void Workspace::addTrack(InstrumentType type)
+{
+    if (pluginsLoading_)
+    {
+        message_ = "Wait for plugin loading to finish";
+        return;
+    }
+    if (project_.channels.size() >= maxChannels || project_.tracks.size() >= 128)
+    {
+        message_ = "Track capacity reached";
+        repaint();
+        return;
+    }
+    const char *names[] = {"Synth", "Kick", "Snare", "Hi-hat", "Sampler"};
+    const auto name =
+        std::string(names[static_cast<size_t>(type)]) + " " + std::to_string(project_.channels.size() + 1);
+    edit("Add instrument track",
+         [=](Project &p)
+         {
+             Channel channel;
+             channel.id = ChannelID{p.nextId()};
+             channel.name = name;
+             channel.instrument = type;
+             channel.color = type == InstrumentType::Synth ? 0xffb797c7 : 0xff98b778;
+             p.channels.push_back(channel);
+             Track track;
+             track.id = TrackID{p.nextId()};
+             track.name = name;
+             track.color = channel.color;
+             p.tracks.push_back(track);
+         });
+    selectedChannel_ = std::max(0, static_cast<int>(project_.channels.size()) - 1);
+    rackOffset_ = std::max(0, selectedChannel_ - std::max(1, (rackBounds_.getHeight() - 43) / 31) + 1);
+    showRack_ = true;
+    sync(true);
+    resized();
+    message_ = "Track added. Draw steps in the Rack, then place the pattern in the Playlist.";
+}
+void Workspace::replaceProject(bool demo)
+{
+    if (pluginsLoading_)
+    {
+        message_ = "Wait for plugin loading to finish";
+        return;
+    }
+    audio_.renderer.setPlaying(false);
+    audio_.renderer.setRecording(false);
+    audio_.stopRecording();
+    midiRecord_.setToggleState(false, juce::dontSendNotification);
+    audioRecord_.setToggleState(false, juce::dontSendNotification);
+    midiRecorder_ = MidiRecorder{};
+    closePluginEditor();
+    project_ = demo ? makeDemoProject() : Project{};
+    if (project_.patterns.empty())
+    {
+        Pattern pattern;
+        pattern.id = PatternID{project_.nextId()};
+        project_.patterns.push_back(pattern);
+    }
+    selected_ = project_.patterns.front().id;
+    selectedChannel_ = 0;
+    rackOffset_ = 0;
+    currentFile_ = juce::File{};
+    dirty_ = false;
+    undo_.clear();
+    preview_.reset();
+    audio_.renderer.rewind();
+    songMode_ = true;
+    song_.setButtonText("SONG");
+    resetLayout();
+    sync(true);
+    restoreSamplesAsync();
+    message_ = demo ? "Demonstration project loaded"
+                    : "Empty project. Use + TRACK to begin, or HELP for the tutorial.";
+}
+void Workspace::projectMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem(1, "New empty project");
+    menu.addItem(2, "Open demonstration project");
+    const juce::Component::SafePointer<Workspace> self(this);
+    menu.showMenuAsync(
+        juce::PopupMenu::Options().withTargetComponent(&newProject_),
+        [self](int choice)
+        {
+            if (!self || choice == 0)
+                return;
+            if (!self->dirty_)
+            {
+                self->replaceProject(choice == 2);
+                return;
+            }
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::WarningIcon)
+                    .withTitle("Unsaved project")
+                    .withMessage("Save your project before replacing it if you want to keep the changes.")
+                    .withButton("Discard and continue")
+                    .withButton("Cancel"),
+                [self, choice](int result)
+                {
+                    if (self && result == 1)
+                        self->replaceProject(choice == 2);
+                });
+        });
+}
+void Workspace::showTutorial()
+{
+    if (tutorialWindow_)
+    {
+        tutorialWindow_->setVisible(true);
+        tutorialWindow_->toFront(true);
+        return;
+    }
+    class GuideWindow final : public juce::DocumentWindow
+    {
+      public:
+        GuideWindow() : DocumentWindow("LS Factory / Tutorial", panel, DocumentWindow::allButtons)
+        {
+            setUsingNativeTitleBar(false);
+            setContentOwned(new TutorialPanel, true);
+            setResizable(true, false);
+            setResizeLimits(520, 400, 1400, 1000);
+            centreWithSize(700, 560);
+            setVisible(true);
+        }
+        void closeButtonPressed() override
+        {
+            setVisible(false);
+        }
+    };
+    tutorialWindow_ = std::make_unique<GuideWindow>();
+}
 Workspace::~Workspace()
 {
     stopTimer();
+    tutorialWindow_.reset();
     closePluginEditor();
     workers_.removeAllJobs(true, -1);
     setLookAndFeel(nullptr);
@@ -267,39 +434,68 @@ juce::Rectangle<int> Workspace::timeline() const
         .withTrimmedTop(48)
         .withTrimmedBottom(view_ == View::Piano ? 76 : 0);
 }
+juce::Rectangle<int> Workspace::constrainPanel(juce::Rectangle<int> r, bool rack) const
+{
+    const auto area =
+        juce::Rectangle<int>(8, 134, std::max(1, getWidth() - 16), std::max(1, getHeight() - 174));
+    r.setSize(juce::jlimit(std::min(rack ? 460 : 520, area.getWidth()), area.getWidth(), r.getWidth()),
+              juce::jlimit(std::min(rack ? 150 : 260, area.getHeight()), area.getHeight(), r.getHeight()));
+    r.setPosition(juce::jlimit(area.getX(), area.getRight() - r.getWidth(), r.getX()),
+                  juce::jlimit(area.getY(), area.getBottom() - r.getHeight(), r.getY()));
+    return r;
+}
+void Workspace::resetLayout()
+{
+    viewBounds_ = {};
+    rackPlaced_ = false;
+    resized();
+    repaint();
+}
 void Workspace::resized()
 {
-    auto row = juce::Rectangle<int>(244, 12, getWidth() - 258, 32);
-    auto place = [&](juce::Component &c, int w) { c.setBounds(row.removeFromLeft(w).reduced(2)); };
-    place(song_, 72);
-    place(play_, 65);
-    place(stop_, 60);
-    place(loop_, 60);
-    place(tempo_, 112);
-    row.removeFromLeft(150);
-    place(open_, 62);
-    place(save_, 62);
-    place(export_, 108);
-    place(settings_, 68);
-    place(midiRecord_, 80);
-    place(audioRecord_, 68);
-    place(pluginsButton_, 76);
-    auto tabs = juce::Rectangle<int>(244, 62, getWidth() - 258, 27);
-    auto tab = [&](juce::Component &c, int w) { c.setBounds(tabs.removeFromLeft(w).reduced(2, 0)); };
-    tab(playlist_, 114);
-    tab(piano_, 124);
-    tab(mixer_, 108);
-    tab(rackButton_, 150);
-    tab(patterns_, 156);
-    tab(channels_, 156);
-    tab(undoButton_, 58);
-    tab(redoButton_, 58);
-    browserBounds_ = {8, 100, 220, getHeight() - 136};
-    search_.setBounds(18, 138, 200, 28);
-    editorBounds_ = {238, 100, getWidth() - 246, getHeight() - 136};
-    rackBounds_ = {268, getHeight() - 296, std::min(780, getWidth() - 296), 246};
-    if (showRack_ && view_ != View::Playlist)
-        editorBounds_.setBottom(rackBounds_.getY() - 10);
+    const int left = 190, width = std::max(1, getWidth() - left - 10);
+    auto row = juce::Rectangle<int>(left, 10, width, 30);
+    const float scale = std::min(1.0f, static_cast<float>(width) / 1060.0f);
+    auto place = [&](juce::Component &c, int w)
+    { c.setBounds(row.removeFromLeft(static_cast<int>(w * scale)).reduced(2, 0)); };
+    place(song_, 68);
+    place(play_, 60);
+    place(stop_, 56);
+    place(loop_, 54);
+    place(tempo_, 108);
+    row.removeFromLeft(static_cast<int>(140 * scale));
+    place(newProject_, 80);
+    place(open_, 60);
+    place(save_, 60);
+    place(export_, 104);
+    row = {left, 48, width, 28};
+    place(playlist_, 112);
+    place(piano_, 124);
+    place(mixer_, 100);
+    place(rackButton_, 142);
+    place(patterns_, 146);
+    place(channels_, 146);
+    place(undoButton_, 58);
+    place(redoButton_, 58);
+    row = {left, 86, width, 28};
+    place(addTrack_, 98);
+    place(midiRecord_, 90);
+    place(audioRecord_, 82);
+    place(settings_, 70);
+    place(pluginsButton_, 80);
+    place(layout_, 76);
+    place(help_, 84);
+    place(fullscreen_, 92);
+    browserBounds_ = {8, 134, 220, getHeight() - 174};
+    search_.setBounds(18, 172, 200, 28);
+    auto &bounds = viewBounds_[static_cast<size_t>(view_)];
+    if (bounds.isEmpty())
+        bounds = {238, 134, getWidth() - 246, getHeight() - 174};
+    bounds = constrainPanel(bounds, false);
+    editorBounds_ = bounds;
+    if (!rackPlaced_)
+        rackBounds_ = {220, std::max(134, getHeight() - 296), std::min(740, getWidth() - 236), 246};
+    rackBounds_ = constrainPanel(rackBounds_, true);
     playlist_.setToggleState(view_ == View::Playlist, juce::dontSendNotification);
     piano_.setToggleState(view_ == View::Piano, juce::dontSendNotification);
     mixer_.setToggleState(view_ == View::Mixer, juce::dontSendNotification);
@@ -308,17 +504,18 @@ void Workspace::resized()
 void Workspace::paint(juce::Graphics &g)
 {
     g.fillAll(background);
-    box(g, {0, 0, getWidth(), 94}, panel);
+    box(g, {0, 0, getWidth(), 124}, panel);
     text(g, "LS", {18, 11, 42, 37}, 28, accent);
-    text(g, "FACTORY", {60, 14, 130, 30}, 21);
-    text(g, "PATTERN WORKSTATION", {20, 53, 205, 18}, 10, muted);
+    text(g, "FACTORY", {60, 14, 120, 30}, 21);
+    text(g, "PATTERN WORKSTATION", {20, 53, 160, 18}, 10, muted);
     const double beat = audio_.renderer.positionBeat();
     const int bar = static_cast<int>(beat / 4) + 1;
     const int subdivision = static_cast<int>(std::fmod(beat, 4)) + 1;
     text(g,
          juce::String(bar).paddedLeft('0', 3) + ":" + juce::String(subdivision).paddedLeft('0', 2) + ":" +
              juce::String(static_cast<int>(std::fmod(beat, 1) * 100)).paddedLeft('0', 2),
-         {626, 10, 132, 36}, 25, accent);
+         {tempo_.getRight() + 4, 10, std::max(70, newProject_.getX() - tempo_.getRight() - 8), 30}, 25,
+         accent);
     drawBrowser(g);
     if (view_ == View::Playlist)
         drawPlaylist(g);
@@ -326,8 +523,20 @@ void Workspace::paint(juce::Graphics &g)
         drawPiano(g);
     else
         drawMixer(g);
+    g.setColour(muted);
+    g.drawLine(
+        static_cast<float>(editorBounds_.getRight() - 12), static_cast<float>(editorBounds_.getBottom() - 4),
+        static_cast<float>(editorBounds_.getRight() - 4), static_cast<float>(editorBounds_.getBottom() - 12));
     if (showRack_)
         drawRack(g);
+    if (project_.tracks.empty() && view_ == View::Playlist)
+    {
+        auto r = timeline().reduced(30);
+        r.setHeight(100);
+        text(g, "START A NEW SESSION", r.withHeight(30), 20, accent);
+        text(g, "+ TRACK adds your first instrument. HELP takes you through every step.",
+             r.withTrimmedTop(34).withHeight(28), 13, ink);
+    }
     box(g, {0, getHeight() - 29, getWidth(), 29}, panel);
     text(g, message_, {14, getHeight() - 27, getWidth() - 370, 24}, 11, muted);
     auto *device = audio_.devices.getCurrentAudioDevice();
@@ -343,8 +552,8 @@ void Workspace::drawBrowser(juce::Graphics &g)
     box(g, browserBounds_, panel.darker(0.16f));
     text(g, "BROWSER", browserBounds_.withHeight(30).reduced(10, 0), 11, muted);
     g.setColour(raised);
-    g.drawHorizontalLine(132, 18, 218);
-    int y = 184;
+    g.drawHorizontalLine(166, 18, 218);
+    int y = 216;
     auto heading = [&](const juce::String &title)
     {
         text(g, title, {20, y, 195, 26}, 11, muted);
@@ -398,7 +607,7 @@ void Workspace::drawPlaylist(juce::Graphics &g)
         static_cast<float>(displayProject().loopEnd - displayProject().loopStart) * beatWidth_;
     g.setColour(accent.withAlpha(0.25f));
     g.fillRect(loopX, static_cast<float>(area.getY() - 23), loopW, 3.0f);
-    const int trackHeight = 72;
+    const int trackHeight = 48;
     const int visible = std::max(8, static_cast<int>(displayProject().tracks.size()));
     for (int index = 0; index < visible; ++index)
     {
@@ -410,15 +619,13 @@ void Workspace::drawPlaylist(juce::Graphics &g)
                              static_cast<float>(area.getRight()));
         if (index >= static_cast<int>(displayProject().tracks.size()))
         {
-            text(g, "Track " + juce::String(index + 1), {editorBounds_.getX() + 12, y + 6, 140, 25}, 11,
-                 muted);
             continue;
         }
         const auto &t = displayProject().tracks[static_cast<std::size_t>(index)];
         g.setColour(juce::Colour(t.color));
         g.fillRect(editorBounds_.getX() + 1, y + 1, 4, trackHeight - 1);
         text(g, t.name, {editorBounds_.getX() + 14, y + 4, 138, 26}, 12);
-        text(g, "PATTERN", {editorBounds_.getX() + 14, y + 33, 130, 20}, 9, muted);
+        text(g, "PATTERN", {editorBounds_.getX() + 14, y + 24, 130, 18}, 9, muted);
         g.saveState();
         g.reduceClipRegion(area.withY(y).withHeight(trackHeight));
         for (std::size_t ci = 0; ci < t.clips.size(); ++ci)
@@ -434,7 +641,7 @@ void Workspace::drawPlaylist(juce::Graphics &g)
             for (const auto &n : pat->notes)
             {
                 const float nx = r.getX() + static_cast<float>(n.startBeat) * beatWidth_;
-                const float ny = r.getY() + 34 + static_cast<float>(n.pitch % 24) * 0.7f;
+                const float ny = r.getY() + 24 + static_cast<float>(n.pitch % 24) * 0.4f;
                 g.setColour(color.brighter(0.35f));
                 g.fillRect(nx, ny, std::max(3.0f, static_cast<float>(n.lengthBeats) * beatWidth_), 2.0f);
             }
@@ -459,7 +666,7 @@ void Workspace::drawPlaylist(juce::Graphics &g)
         {
             const auto &point = lane.points[j];
             const float x = area.getX() + static_cast<float>(point.beat) * beatWidth_,
-                        py = y + 61 - point.value * 48;
+                        py = y + 37 - point.value * 32;
             if (j == 0)
                 path.startNewSubPath(x, py);
             else
@@ -618,16 +825,26 @@ void Workspace::drawRack(juce::Graphics &g)
     g.fillRect(rackBounds_.translated(5, 6));
     box(g, rackBounds_, panel);
     box(g, rackBounds_.withHeight(33), raised);
-    text(g, "CHANNEL RACK", rackBounds_.withHeight(33).reduced(13, 0), 12);
+    text(g, "CHANNEL RACK  /  DRAG TO MOVE", rackBounds_.withHeight(33).reduced(13, 0), 12);
     text(g, "16 STEPS   /   " + (activePattern() ? juce::String(activePattern()->name) : ""),
          rackBounds_.withHeight(33).reduced(13, 0), 11, muted, juce::Justification::centredRight);
+    g.setColour(muted);
+    g.drawLine(
+        static_cast<float>(rackBounds_.getRight() - 12), static_cast<float>(rackBounds_.getBottom() - 4),
+        static_cast<float>(rackBounds_.getRight() - 4), static_cast<float>(rackBounds_.getBottom() - 12));
     const int startX = rackBounds_.getX() + 225;
     const int stepWidth = std::max(12, (rackBounds_.getWidth() - 242) / 16);
     const auto *pat = activePattern();
-    for (std::size_t i = 0; i < displayProject().channels.size() && i < 6; ++i)
+    if (displayProject().channels.empty())
+        text(g, "Add your first instrument with + TRACK",
+             rackBounds_.reduced(24).withTrimmedTop(32).withHeight(40), 14, muted);
+    for (std::size_t i = static_cast<size_t>(rackOffset_);
+         i < displayProject().channels.size() &&
+         static_cast<int>(i) - rackOffset_ < (rackBounds_.getHeight() - 43) / 31;
+         ++i)
     {
         const auto &c = displayProject().channels[i];
-        const int y = rackBounds_.getY() + 43 + static_cast<int>(i) * 31;
+        const int y = rackBounds_.getY() + 43 + (static_cast<int>(i) - rackOffset_) * 31;
         const auto color = juce::Colour(c.color);
         g.setColour(c.muted ? muted : accent);
         g.fillEllipse(static_cast<float>(rackBounds_.getX() + 13), static_cast<float>(y + 9), 8, 8);
@@ -663,11 +880,28 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
     grabKeyboardFocus();
     const auto pos = e.getPosition();
     draggedNote_ = dragTrack_ = dragClip_ = dragFader_ = -1;
+    panelDrag_ = 0;
+    const bool hitRack = showRack_ && rackBounds_.contains(pos);
+    auto bounds = hitRack ? rackBounds_ : editorBounds_;
+    if (bounds.contains(pos) &&
+        (pos.y < bounds.getY() + 28 || (pos.x > bounds.getRight() - 16 && pos.y > bounds.getBottom() - 16)))
+    {
+        panelDrag_ = hitRack ? 1 : 2;
+        panelBefore_ = bounds;
+        panelResize_ = pos.y >= bounds.getY() + 28;
+        if (!panelResize_ && e.getNumberOfClicks() == 2 && !hitRack)
+        {
+            viewBounds_[static_cast<size_t>(view_)] = {238, 134, getWidth() - 246, getHeight() - 174};
+            resized();
+            panelDrag_ = 0;
+        }
+        return;
+    }
     if (showRack_ && rackBounds_.contains(pos))
     {
-        int channel = (pos.y - rackBounds_.getY() - 43) / 31;
+        int channel = rackOffset_ + (pos.y - rackBounds_.getY() - 43) / 31;
         if (pos.y < rackBounds_.getY() + 43 || channel < 0 ||
-            channel >= static_cast<int>(project_.channels.size()) || channel >= 6)
+            channel >= static_cast<int>(project_.channels.size()))
             return;
         selectedChannel_ = channel;
         audio_.renderer.setMidiChannel(channel);
@@ -804,6 +1038,12 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
         return;
     if (view_ == View::Piano)
     {
+        if (project_.channels.empty())
+        {
+            message_ = "Use + TRACK to add an instrument first";
+            repaint();
+            return;
+        }
         auto *pat = activePattern();
         if (!pat)
             return;
@@ -852,7 +1092,7 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
     }
     if (view_ == View::Playlist)
     {
-        const int track = (pos.y - area.getY()) / 72;
+        const int track = (pos.y - area.getY()) / 48;
         if (track >= static_cast<int>(project_.tracks.size()))
         {
             const int lane = track - static_cast<int>(project_.tracks.size());
@@ -860,7 +1100,7 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
                 return;
             const double beat =
                 std::max(0.0, static_cast<double>(std::round((pos.x - area.getX()) / beatWidth_ * 4) / 4));
-            const float value = std::clamp((61.0f - (pos.y - area.getY() - track * 72)) / 48.0f, 0.0f, 1.0f);
+            const float value = std::clamp((37.0f - (pos.y - area.getY() - track * 48)) / 32.0f, 0.0f, 1.0f);
             const bool erase = e.mods.isRightButtonDown();
             edit("Edit automation point",
                  [=](Project &p)
@@ -959,6 +1199,28 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
 }
 void Workspace::mouseDrag(const juce::MouseEvent &e)
 {
+    if (panelDrag_ != 0)
+    {
+        auto r = panelBefore_;
+        if (panelResize_)
+            r.setSize(r.getWidth() + e.getDistanceFromDragStartX(),
+                      r.getHeight() + e.getDistanceFromDragStartY());
+        else
+            r = r.translated(e.getDistanceFromDragStartX(), e.getDistanceFromDragStartY());
+        r = constrainPanel(r, panelDrag_ == 1);
+        if (panelDrag_ == 1)
+        {
+            rackBounds_ = r;
+            rackPlaced_ = true;
+        }
+        else
+        {
+            editorBounds_ = r;
+            viewBounds_[static_cast<size_t>(view_)] = r;
+        }
+        repaint();
+        return;
+    }
     if (dragFader_ >= 0)
     {
         const int top = editorBounds_.getY() + 155, bottom = editorBounds_.getBottom() - 44;
@@ -1010,6 +1272,7 @@ void Workspace::mouseDrag(const juce::MouseEvent &e)
 }
 void Workspace::mouseUp(const juce::MouseEvent &)
 {
+    panelDrag_ = 0;
     if (draggedNote_ >= 0 || dragClip_ >= 0 || dragFader_ >= 0)
     {
         const auto after = *preview_;
@@ -1020,6 +1283,15 @@ void Workspace::mouseUp(const juce::MouseEvent &)
 }
 void Workspace::mouseWheelMove(const juce::MouseEvent &e, const juce::MouseWheelDetails &w)
 {
+    if (showRack_ && rackBounds_.contains(e.getPosition()) && !e.mods.isCtrlDown() && !e.mods.isCommandDown())
+    {
+        rackOffset_ = juce::jlimit(0,
+                                   std::max(0, static_cast<int>(project_.channels.size()) -
+                                                   std::max(1, (rackBounds_.getHeight() - 43) / 31)),
+                                   rackOffset_ + (w.deltaY > 0 ? -1 : 1));
+        repaint();
+        return;
+    }
     if (e.mods.isCtrlDown() || e.mods.isCommandDown())
         beatWidth_ = std::clamp(beatWidth_ * (w.deltaY > 0 ? 1.12f : 0.89f), 8.0f, 120.0f);
     else if (view_ == View::Piano)
@@ -1028,6 +1300,24 @@ void Workspace::mouseWheelMove(const juce::MouseEvent &e, const juce::MouseWheel
 }
 bool Workspace::keyPressed(const juce::KeyPress &key)
 {
+    if (key == juce::KeyPress::F1Key)
+    {
+        showTutorial();
+        return true;
+    }
+    if (key == juce::KeyPress::F11Key)
+    {
+        if (auto *window = findParentComponentOfClass<MainWindow>())
+            window->toggleFullscreen();
+        return true;
+    }
+    if (key == juce::KeyPress::escapeKey)
+    {
+        if (auto *window = findParentComponentOfClass<MainWindow>())
+            if (window->isFullScreen())
+                window->toggleFullscreen();
+        return true;
+    }
     if (key == juce::KeyPress::spaceKey)
     {
         transportToggle();
@@ -1296,8 +1586,8 @@ void Workspace::filesDropped(const juce::StringArray &files, int, int y)
 {
     int channel = selectedChannel_;
     if (showRack_ && y >= rackBounds_.getY() + 43 && y < rackBounds_.getBottom())
-        channel =
-            std::clamp((y - rackBounds_.getY() - 43) / 31, 0, static_cast<int>(project_.channels.size()) - 1);
+        channel = std::clamp(rackOffset_ + (y - rackBounds_.getY() - 43) / 31, 0,
+                             std::max(0, static_cast<int>(project_.channels.size()) - 1));
     if (!files.isEmpty() && !project_.channels.empty())
         importSample(juce::File(files[0]), channel);
 }
@@ -1674,6 +1964,83 @@ void Workspace::showSettings()
 }
 bool Workspace::smokeTest(const juce::File &directory)
 {
+    if (dirty_ || !project_.channels.empty() || !project_.tracks.empty() || !activePattern() ||
+        !activePattern()->notes.empty())
+        return false;
+    auto mouse = [this](juce::Point<int> position, juce::Point<int> origin, bool dragged)
+    {
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), position.toFloat(),
+                                juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1.0f, 0, 0, 0, 0,
+                                this, this, juce::Time::getCurrentTime(), origin.toFloat(),
+                                juce::Time::getCurrentTime(), 1, dragged);
+    };
+    auto gesture = [&](juce::Point<int> from, juce::Point<int> to)
+    {
+        mouseDown(mouse(from, from, false));
+        mouseDrag(mouse(to, from, true));
+        mouseUp(mouse(to, from, true));
+    };
+    const auto rackBefore = rackBounds_;
+    auto grip = rackBefore.getTopLeft() + juce::Point<int>(70, 12);
+    gesture(grip, grip + juce::Point<int>(40, -50));
+    if (rackBounds_ == rackBefore)
+        return false;
+    const auto movedRack = rackBounds_;
+    resized();
+    if (rackBounds_ != movedRack)
+        return false;
+    auto resize = editorBounds_.getBottomRight() - juce::Point<int>(5, 5);
+    gesture(resize, resize - juce::Point<int>(200, 120));
+    const auto smaller = editorBounds_;
+    grip = smaller.getTopLeft() + juce::Point<int>(60, 12);
+    gesture(grip, grip + juce::Point<int>(20, 40));
+    if (editorBounds_ == smaller)
+        return false;
+    const auto movedEditor = editorBounds_;
+    selectView(View::Mixer);
+    selectView(View::Playlist);
+    if (editorBounds_ != movedEditor)
+        return false;
+    resetLayout();
+    if (auto *window = findParentComponentOfClass<MainWindow>())
+    {
+        if (window->isUsingNativeTitleBar())
+            return false;
+        window->toggleFullscreen();
+        if (!window->isFullScreen())
+            return false;
+        window->toggleFullscreen();
+        if (window->isFullScreen())
+            return false;
+    }
+    auto capture = [&](juce::Component &component, const char *name)
+    {
+        juce::FileOutputStream output(directory.getChildFile(name));
+        return juce::PNGImageFormat().writeImageToStream(
+            component.createComponentSnapshot(component.getLocalBounds()), output);
+    };
+    if (!capture(*this, "empty-project.png"))
+        return false;
+    showTutorial();
+    if (!tutorialWindow_ || !capture(*tutorialWindow_->getContentComponent(), "tutorial.png"))
+        return false;
+    tutorialWindow_.reset();
+    const auto empty = project_;
+    addTrack(InstrumentType::Kick);
+    if (project_.channels.size() != 1 || project_.tracks.size() != 1 ||
+        !project_.tracks.front().clips.empty() || !activePattern()->notes.empty())
+        return false;
+    if (!undo_.undo(project_) || project_ != empty || !undo_.redo(project_) || project_.channels.size() != 1)
+        return false;
+    const auto step = juce::Point<int>(rackBounds_.getX() + 225 + 8, rackBounds_.getY() + 50);
+    mouseDown(mouse(step, step, false));
+    mouseUp(mouse(step, step, false));
+    if (activePattern()->notes.size() != 1 || !undo_.undo(project_) || !activePattern()->notes.empty())
+        return false;
+    project_ = makeDemoProject();
+    selected_ = project_.patterns.front().id;
+    undo_.clear();
+    sync(true);
     const auto original = project_;
     if (!exportJson(project_, directory.getChildFile("demo.json").getFullPathName().toStdString()))
         return false;
@@ -1732,12 +2099,18 @@ bool Workspace::smokeTest(const juce::File &directory)
 }
 MainWindow::MainWindow(bool device) : DocumentWindow("LS Factory", panel, DocumentWindow::allButtons)
 {
-    setUsingNativeTitleBar(true);
+    setUsingNativeTitleBar(false);
     setContentOwned(new Workspace(device), true);
     setResizable(true, true);
-    setResizeLimits(1080, 720, 2560, 1600);
-    centreWithSize(1440, 900);
+    setResizeLimits(900, 560, 7680, 4320);
+    const auto area =
+        juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt();
+    centreWithSize(std::min(1440, area.getWidth() - 40), std::min(900, area.getHeight() - 60));
     setVisible(true);
+}
+void MainWindow::toggleFullscreen()
+{
+    setFullScreen(!isFullScreen());
 }
 void MainWindow::closeButtonPressed()
 {

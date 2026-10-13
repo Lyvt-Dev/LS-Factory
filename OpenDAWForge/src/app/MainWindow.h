@@ -31,7 +31,7 @@ class Workspace final : public juce::Component,
         Piano,
         Mixer
     };
-    Project project_ = makeDemoProject();
+    Project project_;
     UndoStack undo_;
     AudioEngine audio_;
     juce::TextButton play_{"PLAY"}, stop_{"STOP"}, song_{"SONG"}, loop_{"LOOP"}, save_{"SAVE"}, open_{"OPEN"},
@@ -39,6 +39,20 @@ class Workspace final : public juce::Component,
         pluginsButton_{"INSERTS"};
     juce::TextButton playlist_{"Playlist  F5"}, piano_{"Piano roll  F7"}, mixer_{"Mixer  F9"},
         rackButton_{"Channel rack  F6"}, undoButton_{"UNDO"}, redoButton_{"REDO"};
+    juce::TextButton newProject_{"PROJECT"}, addTrack_{"+ TRACK"}, help_{"HELP  F1"}, layout_{"LAYOUT"},
+        fullscreen_{"FULL  F11"};
+    std::unique_ptr<juce::DocumentWindow> tutorialWindow_;
+    void showTutorial();
+    void projectMenu();
+    void replaceProject(bool demo);
+    void addTrack(InstrumentType);
+    void resetLayout();
+    juce::Rectangle<int> constrainPanel(juce::Rectangle<int>, bool rack) const;
+    std::array<juce::Rectangle<int>, 3> viewBounds_{};
+    bool rackPlaced_ = false;
+    int panelDrag_ = 0;
+    bool panelResize_ = false;
+    juce::Rectangle<int> panelBefore_;
     juce::Slider tempo_;
     juce::ComboBox patterns_, channels_;
     juce::TextEditor search_;
@@ -66,7 +80,8 @@ class Workspace final : public juce::Component,
     int selectedChannel_ = 0;
     View view_ = View::Playlist;
     bool songMode_ = true, showRack_ = true;
-    juce::String message_ = juce::String::fromUTF8("Ready · Space to play · Click a step to sequence");
+    juce::String message_ =
+        juce::String::fromUTF8("Empty project · + TRACK to begin · HELP for the tutorial");
     MidiRecorder midiRecorder_;
     PatternID recordPattern_;
     juce::File currentFile_;
@@ -117,6 +132,7 @@ class MainWindow final : public juce::DocumentWindow
   public:
     explicit MainWindow(bool openDevice = true);
     void closeButtonPressed() override;
+    void toggleFullscreen();
     Workspace &workspace()
     {
         return *static_cast<Workspace *>(getContentComponent());

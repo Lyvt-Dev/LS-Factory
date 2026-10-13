@@ -56,6 +56,16 @@ with tempfile.TemporaryDirectory(prefix='lsfactory-appimage-') as directory:
     artifact=output/f'LSFactory-{version}-linux-x64-Installer.AppImage'
     shutil.copy2(installer,artifact);artifact.chmod(0o755)
     (output/(artifact.name+'.sha256')).write_text(hashlib.sha256(artifact.read_bytes()).hexdigest()+'  '+artifact.name+'\n')
+    # Mounted AppImage runtimes may present the outer image as argv[0].
+    spoof=temporary/'mounted runtime argv test'
+    subprocess.run(['xvfb-run','-a','bash','-c','exec -a "$1" "$2" --wizard-test "$3"','--',str(artifact),str(installerDir/'usr/bin/lsfactory-installer'),str(spoof)],cwd='/tmp',env=environment,check=True)
+    subprocess.run(['/bin/sh',str(spoof/'program/uninstall.sh')],input='j\n',text=True,env=environment,check=True)
+    # Exercise the real wizard button/worker path after changing the working directory.
+    wizard=temporary/'wizard test with spaces'
+    subprocess.run(['xvfb-run','-a',str(artifact),'--appimage-extract-and-run','--wizard-test',str(wizard)],cwd='/tmp',env=environment,check=True)
+    subprocess.run(['xvfb-run','-a',str(wizard/'home/.local/bin/lsfactory'),'--export-json',str(temporary/'wizard-project.json')],env=environment,check=True)
+    if not (temporary/'wizard-project.json').exists():raise RuntimeError('Wizard-installed application failed to start')
+    subprocess.run(['/bin/sh',str(wizard/'program/uninstall.sh')],input='j\n',text=True,env=environment,check=True)
     # Execute the final AppImage and install from its embedded payload, not the staging tree.
     installed=temporary/'final-installer-test'
     subprocess.run(['xvfb-run','-a',str(artifact),'--appimage-extract-and-run','--install-prefix',str(installed)],env=environment,check=True)

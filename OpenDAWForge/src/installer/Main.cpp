@@ -5,15 +5,18 @@ namespace forge::installer
 {
 juce::File payload()
 {
-    return juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-        .getParentDirectory()
-        .getSiblingFile("share")
-        .getChildFile("lsfactory");
+    // dladdr may report argv[0] relative to a working directory changed by a file chooser.
+    // /proc/self/exe identifies the running binary in both mounted and extracted AppImages.
+    const auto executable = juce::File("/proc/self/exe").getLinkedTarget();
+    return executable.getParentDirectory().getSiblingFile("share").getChildFile("lsfactory");
 }
 class InstallerPanel final : public juce::Component
 {
   public:
-    InstallerPanel()
+    explicit InstallerPanel(const juce::File &testRoot = {})
+        : home_(testRoot == juce::File{} ? juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                                         : testRoot.getChildFile("home")),
+          payload_(payload()), testMode_(testRoot != juce::File{})
     {
         setSize(640, 380);
         title_.setText("LS Factory installieren", juce::dontSendNotification);
@@ -22,9 +25,9 @@ class InstallerPanel final : public juce::Component
                         "Starter und einen Eintrag im Anwendungsmenue.",
                         juce::dontSendNotification);
         detail_.setJustificationType(juce::Justification::topLeft);
-        path_.setText(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                          .getChildFile(".local/opt/lsfactory")
-                          .getFullPathName());
+        path_.setText(
+            (testMode_ ? testRoot.getChildFile("program") : home_.getChildFile(".local/opt/lsfactory"))
+                .getFullPathName());
         path_.setReadOnly(true);
         choose_.setButtonText("Ordner waehlen");
         install_.setButtonText("Installieren");
@@ -63,8 +66,7 @@ class InstallerPanel final : public juce::Component
             choose_.setEnabled(false);
             close_.setEnabled(false);
             status_.setText("Dateien werden geprueft und installiert...", juce::dontSendNotification);
-            const Options options{juce::File::getSpecialLocation(juce::File::userHomeDirectory),
-                                  juce::File(path_.getText()), payload(), shortcut_.getToggleState()};
+            const Options options{home_, juce::File(path_.getText()), payload_, shortcut_.getToggleState()};
             const juce::Component::SafePointer<InstallerPanel> self(this);
             worker_.addJob(
                 [self, options]
@@ -75,6 +77,16 @@ class InstallerPanel final : public juce::Component
                         {
                             if (!self)
                                 return;
+                            if (self->testMode_)
+                            {
+                                std::cout
+                                    << (result.result.wasOk() ? "Wizard installation passed"
+                                                              : result.result.getErrorMessage().toStdString())
+                                    << std::endl;
+                                juce::JUCEApplication::getInstance()->setApplicationReturnValue(
+                                    result.result.wasOk() ? 0 : 1);
+                                juce::JUCEApplication::getInstance()->quit();
+                            }
                             self->close_.setEnabled(true);
                             self->install_.setEnabled(result.result.failed());
                             self->choose_.setEnabled(result.result.failed());
@@ -92,6 +104,10 @@ class InstallerPanel final : public juce::Component
                         });
                 });
         };
+    }
+    void beginTest()
+    {
+        install_.triggerClick();
     }
     ~InstallerPanel() override
     {
@@ -117,6 +133,8 @@ class InstallerPanel final : public juce::Component
     }
 
   private:
+    juce::File home_, payload_;
+    bool testMode_ = false;
     juce::Label title_, detail_, status_;
     juce::TextEditor path_;
     juce::TextButton choose_, install_, close_, launch_;
@@ -128,10 +146,11 @@ class InstallerPanel final : public juce::Component
 class Window final : public juce::DocumentWindow
 {
   public:
-    Window() : DocumentWindow("LS Factory Setup", juce::Colour(0xff283238), DocumentWindow::closeButton)
+    explicit Window(const juce::File &testRoot = {})
+        : DocumentWindow("LS Factory Setup", juce::Colour(0xff283238), DocumentWindow::closeButton)
     {
-        setUsingNativeTitleBar(true);
-        setContentOwned(new InstallerPanel, true);
+        setUsingNativeTitleBar(false);
+        setContentOwned(new InstallerPanel(testRoot), true);
         centreWithSize(640, 380);
         setVisible(true);
     }
@@ -176,6 +195,14 @@ class InstallerApplication final : public juce::JUCEApplication, private juce::T
                       << std::endl;
             setApplicationReturnValue(result.result.wasOk() ? 0 : 1);
             quit();
+            return;
+        }
+        if (args.size() >= 2 && args[0] == "--wizard-test")
+        {
+            window_ = std::make_unique<Window>(juce::File(args[1]));
+            // Reproduce a chooser/desktop launcher changing the working directory.
+            juce::File::getSpecialLocation(juce::File::tempDirectory).setAsCurrentWorkingDirectory();
+            static_cast<InstallerPanel *>(window_->getContentComponent())->beginTest();
             return;
         }
         window_ = std::make_unique<Window>();

@@ -1,6 +1,6 @@
 # LS Factory — native pattern workstation
 
-LS Factory 0.2 is a working C++20/JUCE desktop foundation for the supplied DAW specification. It starts with an original synthesized demo session. The reference informs the dense slate workspace, left browser, top transport, coloured arrangement clips, floating step rack, piano keyboard and velocity lane. No reference audio, graphics, proprietary plugins or algorithms are included.
+LS Factory 0.3 is a working C++20/JUCE desktop foundation for the supplied DAW specification. It starts empty; PROJECT offers an original synthesized demonstration session. The reference informs the dense slate workspace, left browser, top transport, coloured arrangement clips, floating step rack, piano keyboard and velocity lane. No reference audio, graphics, proprietary plugins or algorithms are included.
 
 This is an implementation milestone, not the complete production DAW in the specification. See [implementation status](docs/STATUS.md) for the exact boundary.
 
@@ -46,7 +46,7 @@ ctest --preset debug
 - Click the automation lane to insert/update a point; right-click near a point erases it. Playback applies linear, step or smooth interpolation sample by sample.
 - Mixer: click/drag faders; M/S mute/solo channels. Select a channel strip to edit filter, delay, pan, reverb, compression and saturation in the parameter panel.
 - Drag WAV/AIFF/FLAC/OGG/MP3 files onto a rack channel to replace its instrument with a pitched sampler. Decoder availability follows JUCE's platform support. Samples are mono downmixed, limited to 60 seconds, linked by absolute path and loaded outside the callback.
-- Ctrl/Command + Shift + N adds a synth channel, Shift + P adds a pattern, Shift + T adds a playlist track. The engine supports up to 64 channels and 64 simultaneous voices; the rack currently shows six channels at a time.
+- Ctrl/Command + Shift + N adds a synth channel, Shift + P adds a pattern, Shift + T adds a playlist track. The engine supports up to 64 channels and 64 simultaneous voices; the resizable rack shows as many channels as fit and scrolls through the remaining channels.
 - Ctrl/Command + Z, Shift + Z or Y: undo/redo. Drags form a single transaction.
 - SAVE/OPEN or Ctrl/Command + S/O use the compressed, checksummed `.odaw` format. Dirty sessions autosave every 30 seconds to the platform's application data directory under `LSFactory/recovery.odaw`; OPEN starts in that directory for manual recovery.
 - INSERTS loads up to eight stereo VST3 master effects. A child process scans the selected bundle; the menu opens native/generic editors, bypasses or removes inserts. Projects persist opaque state and normalized parameter values. Instruments, per-channel inserts and CLAP are not implemented yet.
@@ -77,7 +77,7 @@ Original repository code is MIT-licensed. JUCE remains under its own AGPLv3/comm
 
 Pushes to `main` run Linux, Windows and macOS native release builds and tests and upload downloadable application archives as GitHub Actions artifacts. Version tags `v*` run the same validation and publish a GitHub prerelease only after all build jobs pass. Release archives include the original PNG screenshots, dependency notices, commit/version metadata and SHA-256 checksum files. This desktop workflow distributes native applications; there is no web service to deploy.
 
-The workstation milestone is `v0.2.0`; installer delivery is `v0.2.2` (the `v0.2.1` Windows startup check failed, so that tag was not released). Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
+The workstation milestone is `v0.2.0`; the workspace/installer update is `v0.3.0` (the `v0.2.1` Windows startup check failed, so that tag was not released). Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
 
 VST3 integration validation uses an actual test-only shared-library plugin:
 
@@ -94,3 +94,12 @@ Windows: download `LSFactory-<version>-windows-x64-Setup.exe`, run the wizard an
 Linux: download `LSFactory-<version>-linux-x64-Installer.AppImage`, make it executable and open it. This AppImage starts an installation wizard. The wizard verifies and installs the embedded application into `~/.local/opt/lsfactory` by default, writes a launcher to `~/.local/bin/lsfactory` and creates an application-menu entry. You can choose another folder. Existing user files in a managed installation are preserved. The generated `uninstall.sh` removes managed app files and leaves personal projects/settings intact.
 
 If the system cannot mount AppImages, start the installer with `--appimage-extract-and-run`. The installed launcher uses extraction mode automatically and does not need a FUSE mount. Releases are development prereleases and are unsigned. Verify the corresponding SHA-256 checksum. The packaging workflow installs both installers into temporary locations and starts the resulting application before publishing.
+
+
+## Workspace and tutorial
+
+The application now starts empty; the empty Pattern 1 contains no notes. Use **+ TRACK** to choose a native Synth, Kick, Snare, Hi-hat or Sampler and create its blank playlist track. **PROJECT** offers a new empty session or the demonstration project. A dirty session requires explicit discard before replacement.
+
+Drag a panel title bar to move the Rack, Playlist, Piano roll or Mixer within the app, and drag its lower right corner to resize. Each view retains its position during the session; **LAYOUT** restores default positions. Mouse-wheel scrolling inside the Rack accesses additional channels. The main app uses its own draggable title bar with window controls. **F11** toggles fullscreen and **Escape** exits it.
+
+**HELP / F1** opens the twelve-chapter German tutorial, with back/next navigation and a chapter selector. It covers the complete implemented workflow from an empty session through sequencing, arranging, recording, plugins and WAV export. Unimplemented DAW features remain documented in STATUS.md.
