@@ -1,0 +1,8 @@
+OpenDAWForge/build/
+OpenDAWForge/libs/JUCE/
+*.odaw
+*.odaw.tmp
+*.odaw.bak
+*.wav
+dist/
+!OpenDAWForge/tests/fixtures/*.odaw

@@ -1,0 +1,47 @@
+cmake_minimum_required(VERSION 3.24)
+project(LSFactory VERSION 0.2.0 LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(FORGE_BUILD_APP "Build JUCE desktop application" ON)
+option(FORGE_BUILD_PLUGIN_FIXTURE "Build test-only VST3 effect" ON)
+option(FORGE_BUILD_TESTS "Build Catch2 tests" ON)
+include(FetchContent)
+include(cmake/CompilerWarnings.cmake)
+find_package(ZLIB 1.2.9 REQUIRED)
+add_library(forge_core STATIC src/core/Time.cpp src/core/Logger.cpp src/model/Project.cpp
+    src/commands/UndoStack.cpp src/midi/MidiRecorder.cpp src/engine/Transport.cpp src/engine/Scheduler.cpp src/engine/RenderEngine.cpp
+    src/dsp/Envelope.cpp src/dsp/Oscillator.cpp src/dsp/Delay.cpp src/dsp/Reverb.cpp src/dsp/Compressor.cpp src/dsp/EQ.cpp
+    src/instruments/Synth.cpp src/instruments/Sampler.cpp src/persistence/BinaryFormat.cpp src/persistence/JsonExporter.cpp)
+target_link_libraries(forge_core PUBLIC ZLIB::ZLIB)
+target_include_directories(forge_core PUBLIC src)
+forge_warnings(forge_core)
+if(FORGE_BUILD_APP)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/CMakeLists.txt")
+        add_subdirectory(libs/JUCE EXCLUDE_FROM_ALL)
+    else()
+        FetchContent_Declare(JUCE GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+            GIT_TAG 91ad83ae34a81e0833b1a2b0866f54846370ae53 GIT_SHALLOW FALSE)
+        FetchContent_MakeAvailable(JUCE)
+    endif()
+    juce_add_gui_app(LSFactory PRODUCT_NAME "LS Factory" COMPANY_NAME "LS Factory"
+        BUNDLE_ID dev.lsfactory.desktop)
+    target_sources(LSFactory PRIVATE src/app/Main.cpp src/app/MainWindow.cpp src/engine/AudioEngine.cpp src/plugins/host/PluginManager.cpp)
+    target_link_libraries(LSFactory PRIVATE forge_core juce::juce_audio_utils juce::juce_gui_extra)
+    target_compile_definitions(LSFactory PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=$<BOOL:${APPLE}>
+        JUCE_APPLICATION_NAME_STRING="LS Factory" JUCE_APPLICATION_VERSION_STRING="0.2.0")
+    forge_warnings(LSFactory)
+    if(FORGE_BUILD_PLUGIN_FIXTURE AND FORGE_BUILD_TESTS)
+        juce_add_plugin(ForgeGainFixture COMPANY_NAME "LS Factory" PLUGIN_MANUFACTURER_CODE LsFc PLUGIN_CODE FgGn
+            FORMATS VST3 PRODUCT_NAME "Forge Gain Fixture" IS_SYNTH FALSE NEEDS_MIDI_INPUT FALSE NEEDS_MIDI_OUTPUT FALSE COPY_PLUGIN_AFTER_BUILD FALSE)
+        target_sources(ForgeGainFixture PRIVATE tests/plugins/GainFixture.cpp)
+        target_link_libraries(ForgeGainFixture PRIVATE juce::juce_audio_processors)
+        target_compile_definitions(ForgeGainFixture PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
+    endif()
+endif()
+if(FORGE_BUILD_TESTS)
+    enable_testing()
+    FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG 2b60af89e23d28eefc081bc930831ee9d45ea58b GIT_SHALLOW FALSE)
+    FetchContent_MakeAvailable(Catch2)
+    add_subdirectory(tests)
+endif()

@@ -1,0 +1,87 @@
+name: Native builds and releases
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: windows-2022
+            platform: windows-x64
+          - os: macos-14
+            platform: macos-native
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libasound2-dev libfreetype-dev libfontconfig-dev libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev zlib1g-dev xvfb xauth
+      - name: macOS prerequisites
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Windows zlib
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static-md
+      - name: Configure Linux and macOS
+        if: runner.os != 'Windows'
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S OpenDAWForge -B OpenDAWForge/build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S OpenDAWForge -B OpenDAWForge/build/ci -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+      - name: Build
+        run: cmake --build OpenDAWForge/build/ci --config Release --parallel 3
+      - name: Core tests
+        run: ctest --test-dir OpenDAWForge/build/ci -C Release --output-on-failure
+      - name: Linux GUI and actual VST3 smoke tests
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --smoke-test "$PWD/OpenDAWForge/build/ci/smoke"
+          xvfb-run -a 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --plugin-smoke-test "$PWD/OpenDAWForge/build/ci/ForgeGainFixture_artefacts/Release/VST3/Forge Gain Fixture.vst3" "$PWD/OpenDAWForge/build/ci/plugin-smoke"
+      - name: Package desktop app
+        run: python OpenDAWForge/tools/package-release.py --build-dir OpenDAWForge/build/ci --output-dir dist --platform ${{ matrix.platform }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: LSFactory-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish tested milestone
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --title "LS Factory $RELEASE_TAG" --notes-file OpenDAWForge/docs/RELEASE_NOTES.md --prerelease --latest=false

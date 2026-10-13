@@ -1,0 +1,6 @@
+build/
+libs/JUCE/
+*.odaw
+*.wav
+*.autosave
+!tests/fixtures/*.odaw
