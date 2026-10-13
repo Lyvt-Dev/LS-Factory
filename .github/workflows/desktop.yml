@@ -67,10 +67,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory.exe' --factory-smoke-test "$PWD/OpenDAWForge/build/ci/factory-smoke"
-          if ($LASTEXITCODE -ne 0) { throw 'Factory test failed' }
-          & 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory.exe' --update-smoke-test "$PWD/OpenDAWForge/build/ci/update-smoke"
-          if ($LASTEXITCODE -ne 0) { throw 'Update test failed' }
+          $app = "$PWD/OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory.exe"
+          foreach ($kind in @('factory', 'update')) {
+            $stdout = "$env:RUNNER_TEMP/lsfactory-$kind-out.log"
+            $stderr = "$env:RUNNER_TEMP/lsfactory-$kind-err.log"
+            $directory = "$PWD/OpenDAWForge/build/ci/$kind-smoke"
+            $process = Start-Process $app -ArgumentList @("--$kind-smoke-test", "`"$directory`"") -PassThru -Wait -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            $diagnostic = ((Get-Content $stdout -Raw), (Get-Content $stderr -Raw)) -join "`n"
+            Write-Host $diagnostic
+            if ($process.ExitCode -ne 0) {
+              $message = ("exit=$($process.ExitCode); " + $diagnostic).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Windows $kind smoke::$message"
+              throw "Windows $kind smoke failed"
+            }
+          }
       - name: Package desktop app
         run: python OpenDAWForge/tools/package-release.py --build-dir OpenDAWForge/build/ci --output-dir dist --platform ${{ matrix.platform }}
       - name: Build and exercise Linux installer AppImage

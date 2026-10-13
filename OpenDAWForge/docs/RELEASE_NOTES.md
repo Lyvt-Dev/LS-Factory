@@ -1,4 +1,6 @@
-LS Factory 0.4.1 adds the modular factory workspace, note auditioning and optional automatic application updates.
+LS Factory 0.4.2 includes explicit Windows GUI-process waiting and readable smoke-test failure diagnostics in the release pipeline.
+
+This milestone adds the modular factory workspace, note auditioning and optional automatic application updates.
 
 - Factory Library with 46 original CC0 presets, samples, loops and one-shots; type/category/genre/instrument/mood/BPM/tag filters, favourites, recents and local collections.
 - Native preset editor with reusable user presets, permanent verified audio caching and safe free-pack import. Existing .odaw v4 projects and v3 migration remain compatible.

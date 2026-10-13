@@ -586,10 +586,15 @@ juce::Result Library::applyIdea(Project &project, const Idea &idea, bool arrange
 }
 bool Library::smokeTest(const juce::File &directory)
 {
+    const auto fail = [](int line)
+    {
+        std::cerr << "Factory smoke assertion failed at Library.cpp:" << line << std::endl;
+        return false;
+    };
     const auto testRoot = directory.getChildFile("run-" + juce::Uuid().toString());
     Library library(testRoot);
     if (library.entries().size() < 40)
-        return false;
+        return fail(__LINE__);
     juce::StringArray categories;
     for (auto &entry : library.entries())
     {
@@ -599,48 +604,48 @@ bool Library::smokeTest(const juce::File &directory)
         if (r.failed())
         {
             std::cerr << entry.id << ": " << r.getErrorMessage() << std::endl;
-            return false;
+            return fail(__LINE__);
         }
         if (entry.preset.instrument == InstrumentType::Sampler &&
             (!sample.existsAsFile() || juce::SHA256(sample).toHexString() != entry.sha256))
-            return false;
+            return fail(__LINE__);
     }
     for (auto category : {"Drums", "Bass", "Synths", "Keys", "Pads", "FX", "Vocals"})
         if (!categories.contains(category))
-            return false;
+            return fail(__LINE__);
     Filter filter;
     filter.kind = "loop";
     filter.genre = "House";
     filter.bpm = 120;
     filter.tags = "drums, house";
     if (library.search(filter).size() != 2)
-        return false;
+        return fail(__LINE__);
     filter = {};
     filter.category = "Bass";
     filter.text = "round";
     if (library.search(filter).empty())
-        return false;
+        return fail(__LINE__);
     library.toggleFavourite("kick");
     library.used("kick");
     if (library.collect("Test collection", "kick").failed())
-        return false;
+        return fail(__LINE__);
     Library reopened(testRoot);
     if (!reopened.favourite("kick") || !reopened.collections().contains("Test collection"))
-        return false;
+        return fail(__LINE__);
     filter = {};
     filter.favourites = true;
     if (reopened.search(filter).size() != 1)
-        return false;
+        return fail(__LINE__);
     filter = {};
     filter.recent = true;
     if (reopened.search(filter).size() != 1)
-        return false;
+        return fail(__LINE__);
     const auto exportFile = testRoot.getChildFile("export-state.json");
     if (reopened.exportState(exportFile).failed())
-        return false;
+        return fail(__LINE__);
     Library transferred(testRoot.getChildFile("transferred"));
     if (transferred.importState(exportFile).failed() || !transferred.favourite("kick"))
-        return false;
+        return fail(__LINE__);
     auto preset = library.entries().front();
     preset.preset.instrument = InstrumentType::Synth;
     preset.resource.clear();
@@ -648,27 +653,27 @@ bool Library::smokeTest(const juce::File &directory)
     preset.name = "Test user preset";
     preset.preset.cutoff = .22f;
     if (library.savePreset(preset).failed())
-        return false;
+        return fail(__LINE__);
     Library saved(testRoot);
     filter = {};
     filter.text = "Test user preset";
     if (saved.search(filter).size() != 1)
-        return false;
+        return fail(__LINE__);
     auto idea = library.generate("House", 120, 60, true, "Energetic", 42),
          repeat = library.generate("House", 120, 60, true, "Energetic", 42);
     if (idea.parts.size() != 5 || repeat.parts.size() != 5)
-        return false;
+        return fail(__LINE__);
     for (size_t i = 0; i < idea.parts.size(); ++i)
     {
         if (idea.parts[i].notes.empty() || idea.parts[i].notes != repeat.parts[i].notes ||
             idea.parts[i].entry.id != repeat.parts[i].entry.id)
-            return false;
+            return fail(__LINE__);
         if (i >= 3)
             for (auto &note : idea.parts[i].notes)
             {
                 const int pitch = ((note.pitch - 60) % 12 + 12) % 12;
                 if (pitch != 0 && pitch != 3 && pitch != 5 && pitch != 7 && pitch != 10)
-                    return false;
+                    return fail(__LINE__);
             }
     }
     auto original = makeDemoProject(), project = original;
@@ -676,26 +681,26 @@ bool Library::smokeTest(const juce::File &directory)
     if (result.failed())
     {
         std::cerr << result.getErrorMessage() << std::endl;
-        return false;
+        return fail(__LINE__);
     }
     if (project.channels.size() != original.channels.size() + 5 || project.tempoMap != original.tempoMap)
-        return false;
+        return fail(__LINE__);
     for (size_t i = 0; i < original.channels.size(); ++i)
         if (project.channels[i] != original.channels[i])
-            return false;
+            return fail(__LINE__);
     for (size_t i = 0; i < original.tracks.size(); ++i)
         if (project.tracks[i] != original.tracks[i])
-            return false;
+            return fail(__LINE__);
     const auto file = testRoot.getChildFile("factory-project.odaw");
     if (!saveProject(project, file.getFullPathName().toStdString()))
-        return false;
+        return fail(__LINE__);
     Project loaded;
     if (!loadProject(file.getFullPathName().toStdString(), loaded) || loaded != project)
-        return false;
+        return fail(__LINE__);
     Project patternOnly;
     if (applyIdea(patternOnly, idea, false, true, testRoot).failed() || !patternOnly.tracks.empty() ||
         patternOnly.patterns.size() != 1 || patternOnly.patterns.front().notes.empty())
-        return false;
+        return fail(__LINE__);
     auto bad = encode(library.entries().front());
     bad.getDynamicObject()->setProperty("file", "../escape.wav");
     auto manifest = object();
@@ -705,25 +710,25 @@ bool Library::smokeTest(const juce::File &directory)
     badFile.replaceWithText(juce::JSON::toString(manifest));
     const auto count = library.entries().size();
     if (library.importPack(badFile).wasOk() || library.entries().size() != count)
-        return false;
+        return fail(__LINE__);
     bad.getDynamicObject()->setProperty("file", "safe-pack-sample.wav");
     bad.getDynamicObject()->setProperty("tier", "premium");
     badFile.replaceWithText(juce::JSON::toString(manifest));
     const auto premium = library.importPack(badFile);
     if (premium.wasOk() || !premium.getErrorMessage().contains("Premium"))
-        return false;
+        return fail(__LINE__);
     bad.getDynamicObject()->setProperty("tier", "free");
     juce::File source;
     if (materialize(library.entries().front(), source, testRoot).failed() ||
         !source.copyFileTo(testRoot.getChildFile("safe-pack-sample.wav")))
-        return false;
+        return fail(__LINE__);
     badFile.replaceWithText(juce::JSON::toString(manifest));
     if (library.importPack(badFile).failed() || library.entries().size() != count + 1)
-        return false;
+        return fail(__LINE__);
     transferred.toggleFavourite("snare");
     if (transferred.importState(exportFile).failed() || !transferred.favourite("snare") ||
         !transferred.favourite("kick"))
-        return false;
+        return fail(__LINE__);
     std::cout << "Factory asset checksums / metadata filters / favourites / collections / preset persistence "
                  "/ deterministic ideas / existing-project preservation / pack safety passed"
               << std::endl;
