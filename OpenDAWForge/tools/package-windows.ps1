@@ -24,8 +24,12 @@ try {
     $app = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--export-json', "`"$temporary/project.json`"") -PassThru -Wait
     if ($app.ExitCode -ne 0 -or !(Test-Path "$temporary/project.json")) { throw "Installed app smoke failed: exit=$($app.ExitCode), jsonExists=$(Test-Path "$temporary/project.json"), files=$((Get-ChildItem $installed -Name) -join ',')" }
     $smokeDirectory = Join-Path $temporary 'installed-smoke'
-    $smoke = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--smoke-test', "`"$smokeDirectory`"") -PassThru -Wait
-    if ($smoke.ExitCode -ne 0 -or !(Test-Path "$smokeDirectory/playlist.png")) { throw "Installed GUI/WAV smoke failed: exit=$($smoke.ExitCode)" }
+    $smokeOut = Join-Path $temporary 'gui-out.log'
+    $smokeErr = Join-Path $temporary 'gui-err.log'
+    $smoke = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--smoke-test', "`"$smokeDirectory`"") -PassThru -Wait -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
+    $smokeDiagnostic = ((Get-Content $smokeOut -Raw), (Get-Content $smokeErr -Raw)) -join "`n"
+    Write-Host $smokeDiagnostic
+    if ($smoke.ExitCode -ne 0 -or !(Test-Path "$smokeDirectory/playlist.png")) { throw "Installed GUI/WAV smoke failed: exit=$($smoke.ExitCode); $smokeDiagnostic" }
     # Exercise the updater's wait-for-exit path and actual GUI relaunch.
     $userProject = Join-Path $installed 'user-session.odaw'
     'preserve' | Set-Content $userProject

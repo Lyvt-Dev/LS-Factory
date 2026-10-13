@@ -13,7 +13,7 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
     }
     const juce::String getApplicationVersion() override
     {
-        return "0.4.2";
+        return "0.4.3";
     }
     bool moreThanOneInstanceAllowed() override
     {
@@ -102,14 +102,37 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
   private:
     std::unique_ptr<MainWindow> window_;
     bool smoke_ = false;
+    std::unique_ptr<Workspace::FactorySmoke> factorySmoke_;
     juce::File output_;
     void timerCallback() override
     {
+        if (factorySmoke_)
+        {
+            const bool ok = window_->workspace().factoryIntegrationSmokeStep(*factorySmoke_);
+            if (ok && !factorySmoke_->finished)
+                return;
+            stopTimer();
+            std::cout << (ok ? "UI / project / WAV / asynchronous factory integration smoke passed"
+                             : "Factory UI smoke failed")
+                      << std::endl;
+            setApplicationReturnValue(ok ? 0 : 1);
+            quit();
+            return;
+        }
         stopTimer();
-        const bool success = window_->workspace().smokeTest(output_);
-        std::cout << (success ? "UI / project / WAV smoke passed" : "Smoke failed") << std::endl;
-        setApplicationReturnValue(success ? 0 : 1);
-        quit();
+        juce::MessageManager::callAsync(
+            [this]
+            {
+                if (!window_->workspace().smokeTest(output_))
+                {
+                    std::cerr << "UI / project / WAV smoke failed" << std::endl;
+                    setApplicationReturnValue(1);
+                    quit();
+                    return;
+                }
+                factorySmoke_ = std::make_unique<Workspace::FactorySmoke>();
+                startTimer(20);
+            });
     }
 };
 } // namespace forge

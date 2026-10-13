@@ -7,6 +7,7 @@
 #include "persistence/JsonExporter.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 namespace forge
 {
 namespace
@@ -324,7 +325,7 @@ bool Workspace::readyForUpdate() const
            !(pluginWindow_ && pluginWindow_->isVisible()) &&
            juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0 && !dirty_ &&
            !audio_.auditionActive() && !pluginEdited_.load() && !midiRecord_.getToggleState() &&
-           !audio_.renderer.playing() && !audio_.recordingAudio() && !pluginsLoading_ &&
+           !audio_.renderer.playing() && !audio_.recordingAudio() && !pluginsLoading_ && !factoryLoading_ &&
            workers_.getNumJobs() == 0 && previewPitch_ < 0;
 }
 void Workspace::showUpdates(bool visible)
@@ -500,7 +501,7 @@ void Workspace::loadLibraryEntry(library::Entry entry, int destination, int targ
         message_ = "Stop recording before loading factory content";
         return;
     }
-    if (pluginsLoading_)
+    if (pluginsLoading_ || factoryLoading_ || workers_.getNumJobs() > 0)
     {
         message_ = "Wait for loading to finish";
         return;
@@ -514,6 +515,7 @@ void Workspace::loadLibraryEntry(library::Entry entry, int destination, int targ
                              : TrackID{};
     const juce::Component::SafePointer<Workspace> self(this);
     const auto root = libraryRoot_;
+    factoryLoading_ = true;
     workers_.addJob(
         [self, entry, destination, beat, channelId, patternId, trackId, root]
         {
@@ -531,6 +533,7 @@ void Workspace::loadLibraryEntry(library::Entry entry, int destination, int targ
                 {
                     if (!self)
                         return;
+                    self->factoryLoading_ = false;
                     if (r.failed())
                     {
                         self->message_ = r.getErrorMessage();
@@ -639,7 +642,7 @@ void Workspace::loadIdea(library::Idea idea, bool arrangement, bool tempo)
         message_ = "Stop recording before loading factory content";
         return;
     }
-    if (pluginsLoading_)
+    if (pluginsLoading_ || factoryLoading_ || workers_.getNumJobs() > 0)
     {
         message_ = "Wait for loading to finish";
         return;
@@ -647,6 +650,7 @@ void Workspace::loadIdea(library::Idea idea, bool arrangement, bool tempo)
     const auto before = project_;
     const auto root = libraryRoot_;
     const juce::Component::SafePointer<Workspace> self(this);
+    factoryLoading_ = true;
     workers_.addJob(
         [self, before, idea, arrangement, tempo, root]
         {
@@ -657,6 +661,7 @@ void Workspace::loadIdea(library::Idea idea, bool arrangement, bool tempo)
                 {
                     if (!self)
                         return;
+                    self->factoryLoading_ = false;
                     if (result.failed())
                     {
                         self->message_ = result.getErrorMessage();
@@ -2436,9 +2441,15 @@ void Workspace::showSettings()
 }
 bool Workspace::smokeTest(const juce::File &directory)
 {
+    const auto fail = [this](int line)
+    {
+        std::cerr << "UI smoke assertion failed at MainWindow.cpp:" << line << "; size=" << getWidth() << "x"
+                  << getHeight() << "; message=" << message_ << std::endl;
+        return false;
+    };
     if (dirty_ || !project_.channels.empty() || !project_.tracks.empty() || !activePattern() ||
         !activePattern()->notes.empty())
-        return false;
+        return fail(__LINE__);
     auto mouse = [this](juce::Point<int> position, juce::Point<int> origin, bool dragged)
     {
         return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), position.toFloat(),
@@ -2456,34 +2467,34 @@ bool Workspace::smokeTest(const juce::File &directory)
     auto grip = rackBefore.getTopLeft() + juce::Point<int>(70, 12);
     gesture(grip, grip + juce::Point<int>(40, -50));
     if (rackBounds_ == rackBefore)
-        return false;
+        return fail(__LINE__);
     const auto movedRack = rackBounds_;
     resized();
     if (rackBounds_ != movedRack)
-        return false;
+        return fail(__LINE__);
     auto resize = editorBounds_.getBottomRight() - juce::Point<int>(5, 5);
     gesture(resize, resize - juce::Point<int>(200, 120));
     const auto smaller = editorBounds_;
     grip = smaller.getTopLeft() + juce::Point<int>(60, 12);
     gesture(grip, grip + juce::Point<int>(20, 40));
     if (editorBounds_ == smaller)
-        return false;
+        return fail(__LINE__);
     const auto movedEditor = editorBounds_;
     selectView(View::Mixer);
     selectView(View::Playlist);
     if (editorBounds_ != movedEditor)
-        return false;
+        return fail(__LINE__);
     resetLayout();
     if (auto *window = findParentComponentOfClass<MainWindow>())
     {
         if (window->isUsingNativeTitleBar())
-            return false;
+            return fail(__LINE__);
         window->toggleFullscreen();
         if (!window->isFullScreen())
-            return false;
+            return fail(__LINE__);
         window->toggleFullscreen();
         if (window->isFullScreen())
-            return false;
+            return fail(__LINE__);
     }
     auto capture = [&](juce::Component &component, const char *name)
     {
@@ -2492,28 +2503,30 @@ bool Workspace::smokeTest(const juce::File &directory)
             component.createComponentSnapshot(component.getLocalBounds()), output);
     };
     if (!capture(*this, "empty-project.png"))
-        return false;
+        return fail(__LINE__);
     showTutorial();
     if (!tutorialWindow_ || !capture(*tutorialWindow_->getContentComponent(), "tutorial.png"))
-        return false;
+        return fail(__LINE__);
     tutorialWindow_.reset();
     const auto empty = project_;
     addTrack(InstrumentType::Kick);
     if (project_.channels.size() != 1 || project_.tracks.size() != 1 ||
         !project_.tracks.front().clips.empty() || !activePattern()->notes.empty())
-        return false;
+        return fail(__LINE__);
     if (!undo_.undo(project_) || project_ != empty || !undo_.redo(project_) || project_.channels.size() != 1)
-        return false;
+        return fail(__LINE__);
     const auto step = juce::Point<int>(rackBounds_.getX() + 225 + 8, rackBounds_.getY() + 50);
     mouseDown(mouse(step, step, false));
     mouseUp(mouse(step, step, false));
     if (activePattern()->notes.size() != 1 || !undo_.undo(project_) || !activePattern()->notes.empty())
-        return false;
+        return fail(__LINE__);
     addTrack(InstrumentType::Synth);
+    showRack_ = false;
     selectView(View::Piano);
     const auto auditionProject = project_;
     const auto pianoArea = timeline();
-    const auto key = juce::Point<int>(editorBounds_.getX() + 20, pianoArea.getY() + 12 * 18 + 9);
+    const int keyRow = std::min(12, std::max(0, pianoArea.getHeight() / 18 - 1));
+    const auto key = juce::Point<int>(editorBounds_.getX() + 20, pianoArea.getY() + keyRow * 18 + 9);
     audio_.renderer.setRecording(true);
     mouseDown(mouse(key, key, false));
     std::array<float, 512> auditionLeft{}, auditionRight{};
@@ -2522,18 +2535,18 @@ bool Workspace::smokeTest(const juce::File &directory)
     for (float value : auditionLeft)
         auditionEnergy += value * value;
     CapturedMidi auditionCapture;
-    if (auditionEnergy < 0.001 || previewPitch_ != pianoTop_ - 12 || audio_.renderer.playing() ||
+    if (auditionEnergy < 0.001 || previewPitch_ != pianoTop_ - keyRow || audio_.renderer.playing() ||
         audio_.renderer.capture(auditionCapture) || project_ != auditionProject)
-        return false;
+        return fail(__LINE__);
     previewUntil_ = 0;
     timerCallback();
     for (int block = 0; block < 100; ++block)
         audio_.renderer.render(auditionLeft.data(), auditionRight.data(), 512);
     if (previewPitch_ != -1)
-        return false;
+        return fail(__LINE__);
     for (float value : auditionLeft)
         if (std::abs(value) > 0.000001f)
-            return false;
+            return fail(__LINE__);
     const auto notePosition = juce::Point<int>(pianoArea.getX() + static_cast<int>(beatWidth_ * 2), key.y);
     mouseDown(mouse(notePosition, notePosition, false));
     mouseUp(mouse(notePosition, notePosition, false));
@@ -2543,25 +2556,25 @@ bool Workspace::smokeTest(const juce::File &directory)
         auditionEnergy += value * value;
     if (auditionEnergy < 0.001 || activePattern()->notes.size() != 1 ||
         audio_.renderer.capture(auditionCapture))
-        return false;
+        return fail(__LINE__);
     stopPreview();
     audio_.renderer.setRecording(false);
     UpdatePanel updateSettings([] { return false; }, false,
                                directory.getChildFile("update-settings-test.json"));
     if (!updateSettings.preferencesSmokeTest() || !capture(updateSettings, "update-settings.png") ||
         readyForUpdate())
-        return false;
+        return fail(__LINE__);
     libraryRoot_ = directory.getChildFile("factory-ui-state");
     library::Library library(libraryRoot_);
     const auto projectBeforeLibrary = project_;
     const auto sound = library.entries().front();
     juce::File sampleFile;
     if (library::Library::materialize(sound, sampleFile, libraryRoot_).failed())
-        return false;
+        return fail(__LINE__);
     SampleData sample;
     if (!AudioEngine::decodeAudio(sampleFile, sample) ||
         !audio_.audition(sound.preset, std::move(sample), .5))
-        return false;
+        return fail(__LINE__);
     float *auditionOutput[] = {auditionLeft.data(), auditionRight.data()};
     audio_.audioDeviceIOCallbackWithContext(nullptr, 0, auditionOutput, 2, 512,
                                             juce::AudioIODeviceCallbackContext{});
@@ -2569,81 +2582,33 @@ bool Workspace::smokeTest(const juce::File &directory)
     for (float value : auditionLeft)
         auditionEnergy += value * value;
     if (auditionEnergy < .001 || project_ != projectBeforeLibrary || audio_.renderer.positionBeat() != 0)
-        return false;
+        return fail(__LINE__);
     audio_.stopAudition();
     audio_.audioDeviceIOCallbackWithContext(nullptr, 0, auditionOutput, 2, 512,
                                             juce::AudioIODeviceCallbackContext{});
     if (audio_.auditionActive())
-        return false;
+        return fail(__LINE__);
     showLibrary();
     if (!capture(*libraryWindow_->getContentComponent(), "factory-library.png"))
-        return false;
+        return fail(__LINE__);
     libraryWindow_->setVisible(false);
     showLoopStarter();
     if (!capture(*ideaWindow_->getContentComponent(), "loop-starter.png"))
-        return false;
+        return fail(__LINE__);
     ideaWindow_->setVisible(false);
-#if JUCE_MODAL_LOOPS_PERMITTED
-    auto waitForLoad = [this]()
-    {
-        const auto deadline = juce::Time::getMillisecondCounterHiRes() + 5000;
-        do
-        {
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
-        } while ((workers_.getNumJobs() > 0 || pluginsLoading_) &&
-                 juce::Time::getMillisecondCounterHiRes() < deadline);
-        return workers_.getNumJobs() == 0 && !pluginsLoading_;
-    };
-    auto *factoryPanel = static_cast<library::LibraryPanel *>(libraryWindow_->getContentComponent());
-    juce::ListBox *sourceList = nullptr;
-    for (int i = 0; i < factoryPanel->getNumChildComponents(); ++i)
-        if (auto *list = dynamic_cast<juce::ListBox *>(factoryPanel->getChildComponent(i)))
-            sourceList = list;
-    if (!sourceList)
-        return false;
-    juce::SparseSet<int> selection;
-    selection.addRange({0, 1});
-    const auto description = factoryPanel->getDragSourceDescription(selection);
-    const auto beforeDrop = project_;
-    juce::DragAndDropTarget::SourceDetails drop(description, sourceList,
-                                                timeline().getTopLeft() + juce::Point<int>(8, 8));
-    if (!isInterestedInDragSource(drop))
-        return false;
-    itemDropped(drop);
-    if (!waitForLoad() || project_.channels.size() != beforeDrop.channels.size() + 1 ||
-        project_.tracks.front().clips.size() != beforeDrop.tracks.front().clips.size() + 1 ||
-        project_.channels.back().instrument != InstrumentType::Sampler)
-        return false;
-    if (!undo_.undo(project_) || project_ != beforeDrop)
-        return false;
-    sync(true);
-    restoreSamplesAsync();
-    if (!waitForLoad())
-        return false;
-    auto idea = library.generate("House", 120, 60, true, "Energetic", 31);
-    loadIdea(idea, true, false);
-    if (!waitForLoad() || project_.channels.size() != beforeDrop.channels.size() + 5 ||
-        project_.tempoMap != beforeDrop.tempoMap)
-        return false;
-    if (!undo_.undo(project_) || project_ != beforeDrop)
-        return false;
-    sync(true);
-    restoreSamplesAsync();
-    if (!waitForLoad())
-        return false;
-#endif
+
     const auto factoryIdea = library.generate("House", 120, 60, true, "Dreamy", 7);
     Project ideaPreview;
     if (library::Library::applyIdea(ideaPreview, factoryIdea, false, true, libraryRoot_).failed() ||
         !audio_.auditionProject(ideaPreview, ideaPreview.patterns.back().id, 1.0))
-        return false;
+        return fail(__LINE__);
     audio_.audioDeviceIOCallbackWithContext(nullptr, 0, auditionOutput, 2, 512,
                                             juce::AudioIODeviceCallbackContext{});
     auditionEnergy = 0;
     for (float value : auditionLeft)
         auditionEnergy += value * value;
     if (auditionEnergy < .001 || project_ != projectBeforeLibrary)
-        return false;
+        return fail(__LINE__);
     audio_.stopAudition();
     selectView(View::Playlist);
     project_ = makeDemoProject();
@@ -2652,21 +2617,21 @@ bool Workspace::smokeTest(const juce::File &directory)
     sync(true);
     const auto original = project_;
     if (!exportJson(project_, directory.getChildFile("demo.json").getFullPathName().toStdString()))
-        return false;
+        return fail(__LINE__);
     edit("Smoke add note",
          [this](Project &p) { p.findPattern(selected_)->notes.push_back({0, 36, 0.25, 0.25, 0.5f}); });
     if (project_ == original)
-        return false;
+        return fail(__LINE__);
     if (!undo_.undo(project_) || project_ != original)
-        return false;
+        return fail(__LINE__);
     if (!undo_.redo(project_) || project_ == original)
-        return false;
+        return fail(__LINE__);
     const auto file = directory.getChildFile("smoke.odaw");
     if (!saveProject(project_, file.getFullPathName().toStdString()))
-        return false;
+        return fail(__LINE__);
     Project loaded;
     if (!loadProject(file.getFullPathName().toStdString(), loaded) || loaded != project_)
-        return false;
+        return fail(__LINE__);
     project_ = original;
     sync(true);
     for (auto view : {View::Playlist, View::Piano, View::Mixer})
@@ -2686,12 +2651,12 @@ bool Workspace::smokeTest(const juce::File &directory)
         out.setPosition(0);
         out.truncate();
         if (!juce::PNGImageFormat().writeImageToStream(image, out))
-            return false;
+            return fail(__LINE__);
     }
     auto recorder = std::make_unique<AudioEngine>();
     const auto recording = directory.getChildFile("input-test.wav");
     if (!recorder->startRecording(recording, true))
-        return false;
+        return fail(__LINE__);
     std::array<float, 512> input{};
     for (std::size_t i = 0; i < input.size(); ++i)
         input[i] = static_cast<float>(std::sin(i * 0.05)) * 0.25f;
@@ -2703,8 +2668,78 @@ bool Workspace::smokeTest(const juce::File &directory)
     formats.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(recording));
     if (!reader || reader->lengthInSamples != 5120)
-        return false;
+        return fail(__LINE__);
     return static_cast<bool>(audio_.exportWave(project_, directory.getChildFile("demo.wav")));
+}
+bool Workspace::factoryIntegrationSmokeStep(FactorySmoke &state)
+{
+    const auto fail = [this, &state](int line)
+    {
+        std::cerr << "Factory UI smoke failed at MainWindow.cpp:" << line << "; phase=" << state.phase
+                  << "; message=" << message_ << std::endl;
+        state.finished = true;
+        return false;
+    };
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    if (state.phase != 0 && (workers_.getNumJobs() > 0 || pluginsLoading_ || factoryLoading_))
+        return now < state.deadline ? true : fail(__LINE__);
+    state.deadline = now + 5000;
+    if (state.phase == 0)
+    {
+        state.before = project_;
+        showLibrary();
+        libraryWindow_->setVisible(false);
+        showRack_ = false;
+        selectView(View::Playlist);
+        auto *panel = static_cast<library::LibraryPanel *>(libraryWindow_->getContentComponent());
+        juce::ListBox *source = nullptr;
+        for (int i = 0; i < panel->getNumChildComponents(); ++i)
+            if (auto *list = dynamic_cast<juce::ListBox *>(panel->getChildComponent(i)))
+                source = list;
+        if (!source || state.before.tracks.empty())
+            return fail(__LINE__);
+        juce::SparseSet<int> selection;
+        selection.addRange({0, 1});
+        const juce::DragAndDropTarget::SourceDetails drop(panel->getDragSourceDescription(selection), source,
+                                                          timeline().getTopLeft() + juce::Point<int>(8, 8));
+        if (!isInterestedInDragSource(drop))
+            return fail(__LINE__);
+        itemDropped(drop);
+    }
+    else if (state.phase == 1)
+    {
+        if (project_.channels.size() != state.before.channels.size() + 1 ||
+            project_.tracks.front().clips.size() != state.before.tracks.front().clips.size() + 1 ||
+            project_.channels.back().instrument != InstrumentType::Sampler)
+            return fail(__LINE__);
+        if (!undo_.undo(project_) || project_ != state.before)
+            return fail(__LINE__);
+        sync(true);
+        restoreSamplesAsync(true);
+    }
+    else if (state.phase == 2)
+    {
+        library::Library library(libraryRoot_);
+        loadIdea(library.generate("House", 120, 60, true, "Energetic", 31), true, false);
+    }
+    else if (state.phase == 3)
+    {
+        if (project_.channels.size() != state.before.channels.size() + 5 ||
+            project_.tempoMap != state.before.tempoMap)
+            return fail(__LINE__);
+        if (!undo_.undo(project_) || project_ != state.before)
+            return fail(__LINE__);
+        sync(true);
+        restoreSamplesAsync(true);
+    }
+    else
+    {
+        if (project_ != state.before)
+            return fail(__LINE__);
+        state.finished = true;
+    }
+    ++state.phase;
+    return true;
 }
 MainWindow::MainWindow(bool device) : DocumentWindow("LS Factory", panel, DocumentWindow::allButtons)
 {

@@ -24,6 +24,15 @@ class Workspace final : public juce::Component,
     bool isInterestedInFileDrag(const juce::StringArray &) override;
     void filesDropped(const juce::StringArray &, int, int) override;
     bool smokeTest(const juce::File &directory);
+    struct FactorySmoke
+    {
+        Project before;
+        int phase = 0;
+        double deadline = 0;
+        bool finished = false;
+    };
+    bool factoryIntegrationSmokeStep(FactorySmoke &);
+
     bool isInterestedInDragSource(const juce::DragAndDropTarget::SourceDetails &) override;
     void itemDropped(const juce::DragAndDropTarget::SourceDetails &) override;
     void openProject(const juce::File &);
@@ -75,7 +84,7 @@ class Workspace final : public juce::Component,
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::ThreadPool workers_{1};
     std::unique_ptr<juce::DocumentWindow> pluginWindow_;
-    bool pluginsLoading_ = false;
+    bool pluginsLoading_ = false, factoryLoading_ = false;
     std::atomic<bool> pluginEdited_{false};
     juce::AudioProcessor *listeningProcessor_ = nullptr;
     void closePluginEditor();

@@ -1,4 +1,4 @@
-LS Factory 0.4.2 includes explicit Windows GUI-process waiting and readable smoke-test failure diagnostics in the release pipeline.
+LS Factory 0.4.3 includes explicit Windows GUI-process waiting and visible-key/screen-size-independent GUI checks, explicit async drag/drop coverage and readable smoke-test failure diagnostics in the release pipeline.
 
 This milestone adds the modular factory workspace, note auditioning and optional automatic application updates.
 
