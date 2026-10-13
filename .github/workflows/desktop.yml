@@ -29,7 +29,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libasound2-dev libfreetype-dev libfontconfig-dev libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev zlib1g-dev xvfb xauth
+          sudo apt-get install -y clang cmake ninja-build pkg-config libasound2-dev libfreetype-dev libfontconfig-dev libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev zlib1g-dev xvfb xauth desktop-file-utils
       - name: macOS prerequisites
         if: runner.os == 'macOS'
         run: brew install ninja
@@ -37,7 +37,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static-md
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static
       - name: Configure Linux and macOS
         if: runner.os != 'Windows'
         env:
@@ -48,7 +48,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S OpenDAWForge -B OpenDAWForge/build/ci -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+          cmake -S OpenDAWForge -B OpenDAWForge/build/ci -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
       - name: Build
         run: cmake --build OpenDAWForge/build/ci --config Release --parallel 3
       - name: Core tests
@@ -60,6 +60,15 @@ jobs:
           xvfb-run -a 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --plugin-smoke-test "$PWD/OpenDAWForge/build/ci/ForgeGainFixture_artefacts/Release/VST3/Forge Gain Fixture.vst3" "$PWD/OpenDAWForge/build/ci/plugin-smoke"
       - name: Package desktop app
         run: python OpenDAWForge/tools/package-release.py --build-dir OpenDAWForge/build/ci --output-dir dist --platform ${{ matrix.platform }}
+      - name: Build and exercise Linux installer AppImage
+        if: runner.os == 'Linux'
+        run: python OpenDAWForge/tools/package-appimage.py --build-dir OpenDAWForge/build/ci --output-dir dist --tool-cache "$RUNNER_TEMP/appimage-tools"
+      - name: Build and exercise Windows Setup.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe")) { choco install innosetup --yes --no-progress }
+          & OpenDAWForge/tools/package-windows.ps1 -OutputDirectory dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: LSFactory-${{ matrix.platform }}

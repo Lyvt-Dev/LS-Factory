@@ -1387,6 +1387,62 @@ void Workspace::chooseSave()
                                   self->saveTo(c.getResult().withFileExtension("odaw"));
                           });
 }
+void Workspace::openProject(const juce::File &file)
+{
+    if (pluginsLoading_)
+    {
+        message_ = "Wait for plugin loading to finish";
+        return;
+    }
+    const juce::Component::SafePointer<Workspace> self(this);
+    workers_.addJob(
+        [self, file]
+        {
+            Project loaded;
+            const auto result = loadProject(file.getFullPathName().toStdString(), loaded);
+            juce::MessageManager::callAsync(
+                [self, file, result, loaded]
+                {
+                    if (!self)
+                        return;
+                    if (!result)
+                    {
+                        self->message_ = result.error;
+                        return;
+                    }
+                    self->audio_.renderer.setPlaying(false);
+                    self->audio_.renderer.rewind();
+                    self->closePluginEditor();
+                    self->pluginsLoading_ = true;
+                    self->pluginsButton_.setEnabled(false);
+                    self->project_ = loaded;
+                    self->undo_.clear();
+                    self->currentFile_ = file;
+                    self->dirty_ = false;
+                    self->sync(true);
+                    self->message_ = "Loaded " + file.getFileName();
+                    self->workers_.addJob(
+                        [self, loaded]
+                        {
+                            if (!self)
+                                return;
+                            auto restored = self->audio_.restoreSamples(loaded);
+                            if (restored)
+                                restored = self->audio_.restorePlugins(loaded.masterInserts);
+                            juce::MessageManager::callAsync(
+                                [self, restored]
+                                {
+                                    if (!self)
+                                        return;
+                                    self->pluginsLoading_ = false;
+                                    self->pluginsButton_.setEnabled(true);
+                                    if (!restored)
+                                        self->message_ = restored.error;
+                                });
+                        });
+                });
+        });
+}
 void Workspace::chooseOpen()
 {
     chooser_ = std::make_unique<juce::FileChooser>(
@@ -1394,67 +1450,12 @@ void Workspace::chooseOpen()
         juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("LSFactory"),
         "*.odaw");
     const juce::Component::SafePointer<Workspace> self(this);
-    chooser_->launchAsync(
-        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [self](const juce::FileChooser &c)
-        {
-            if (!self || c.getResult() == juce::File{})
-                return;
-            const auto file = c.getResult();
-            self->workers_.addJob(
-                [self, file]
-                {
-                    Project loaded;
-                    const auto result = loadProject(file.getFullPathName().toStdString(), loaded);
-                    juce::MessageManager::callAsync(
-                        [self, file, result, loaded]
-                        {
-                            if (!self)
-                                return;
-                            if (!result)
-                            {
-                                self->message_ = result.error;
-                                return;
-                            }
-                            self->audio_.renderer.setPlaying(false);
-                            self->audio_.renderer.rewind();
-                            self->closePluginEditor();
-                            self->pluginsLoading_ = true;
-                            self->pluginsButton_.setEnabled(false);
-                            self->project_ = loaded;
-                            self->workers_.addJob(
-                                [self, loaded]
-                                {
-                                    if (!self)
-                                        return;
-                                    auto r = self->audio_.restoreSamples(loaded);
-                                    if (r)
-                                        r = self->audio_.restorePlugins(loaded.masterInserts);
-                                    juce::MessageManager::callAsync(
-                                        [self]
-                                        {
-                                            if (self)
-                                            {
-                                                self->pluginsLoading_ = false;
-                                                self->pluginsButton_.setEnabled(true);
-                                            }
-                                        });
-                                    if (!r)
-                                        juce::MessageManager::callAsync(
-                                            [self, r]
-                                            {
-                                                if (self)
-                                                    self->message_ = r.error;
-                                            });
-                                });
-                            self->undo_.clear();
-                            self->currentFile_ = file;
-                            self->dirty_ = false;
-                            self->sync(true);
-                            self->message_ = "Loaded " + file.getFileName();
-                        });
-                });
-        });
+    chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [self](const juce::FileChooser &chooser)
+                          {
+                              if (self && chooser.getResult() != juce::File{})
+                                  self->openProject(chooser.getResult());
+                          });
 }
 void Workspace::chooseExport()
 {

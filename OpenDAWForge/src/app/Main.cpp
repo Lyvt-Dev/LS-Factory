@@ -12,7 +12,7 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
     }
     const juce::String getApplicationVersion() override
     {
-        return "0.2.0";
+        return "0.2.1";
     }
     bool moreThanOneInstanceAllowed() override
     {
@@ -68,6 +68,8 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
             output_.createDirectory();
         }
         window_ = std::make_unique<MainWindow>(!smoke_);
+        if (args.size() == 1 && juce::File(args[0]).hasFileExtension("odaw"))
+            window_->workspace().openProject(juce::File(args[0]));
         if (smoke_)
             startTimer(200);
     }

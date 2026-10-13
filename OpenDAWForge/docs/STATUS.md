@@ -1,10 +1,10 @@
-# Implementation boundary — 0.2.0
+# Implementation boundary — 0.2.1
 
 The full request describes a substantial multi-release DAW. This repository implements the initial native workstation rather than asserting that every requested subsystem is complete.
 
 | Area | Implemented | Still required |
 |---|---|---|
-| Build | C++20, JUCE 8.0.15, CMake presets, Clang Linux build, Catch2 | Executed Windows/macOS builds, packaging, ASIO option |
+| Build | C++20, JUCE 8.0.15, CMake presets, Clang Linux build, Catch2 | Installer CI validation and further platform coverage, ASIO option |
 | Core/model | Strong IDs, results, time conversion, tempo integration, validated channels/patterns/clips/automation | Audio/group clip models, routing graph, markers/time-signature maps |
 | Commands | Validated transactional edits, 100-entry undo/redo, single-command drags | Dedicated per-domain command objects, large-project memory optimisation |
 | Engine | Fixed 64-voice pool, sample-offset scheduling, arbitrary-block loops, bounded snapshots, native render and meters | Graph crossfades, recorded-event sub-block timestamps, comprehensive realtime stress validation |
@@ -26,3 +26,5 @@ The full request describes a substantial multi-release DAW. This repository impl
 There are no FL Studio original plugins, samples, graphics or proprietary algorithms. VST3 stereo effect hosting is verified with the shipped test fixture. Physical-device behaviour and arbitrary third-party plugin compatibility are not claimed. Instruments are still native synth/sample based.
 
 The next concrete implementation step is per-channel insert routing and latency compensation, followed by CLAP hosting and plugin parameter automation. The eight-insert master chain is implemented and validated; it does not establish PDC or instrument hosting. Before a production release, the initial editor shell should be split into dedicated Components and every remaining row validated on the target platforms.
+
+Installer delivery: native Linux wizard packaged as a genuine AppImage containing the application payload; Inno Setup on Windows. Packaging tests check actual installation and startup, with Linux checksum/update/user-file preservation checks.

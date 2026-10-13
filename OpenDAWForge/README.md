@@ -77,7 +77,7 @@ Original repository code is MIT-licensed. JUCE remains under its own AGPLv3/comm
 
 Pushes to `main` run Linux, Windows and macOS native release builds and tests and upload downloadable application archives as GitHub Actions artifacts. Version tags `v*` run the same validation and publish a GitHub prerelease only after all build jobs pass. Release archives include the original PNG screenshots, dependency notices, commit/version metadata and SHA-256 checksum files. This desktop workflow distributes native applications; there is no web service to deploy.
 
-For this milestone use tag `v0.2.0`. Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
+The workstation milestone is `v0.2.0`; installer delivery is `v0.2.1`. Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
 
 VST3 integration validation uses an actual test-only shared-library plugin:
 
@@ -86,3 +86,11 @@ xvfb-run -a "build/debug/LSFactory_artefacts/Debug/LS Factory" --plugin-smoke-te
 ```
 
 Project format v4 loads existing v3 sessions. Unknown versions and truncated/oversized plugin payloads fail before the active project is replaced. Plugin loading and state capture suspend the audio callback. Scanning is process-isolated; playback plugins run in the app process and are not crash-isolated. Host buffers are preallocated; third-party plugin callback behaviour remains outside the host's control. Plugin editors' parameter changes are persisted but are not yet part of the application's undo history.
+
+## Install from a release
+
+Windows: download `LSFactory-<version>-windows-x64-Setup.exe`, run the wizard and launch LS Factory from the Start menu. Installation defaults to the current user's Programs directory and includes an uninstaller. Desktop shortcuts and `.odaw` project associations are optional.
+
+Linux: download `LSFactory-<version>-linux-x64-Installer.AppImage`, make it executable and open it. This AppImage starts an installation wizard. The wizard verifies and installs the embedded application into `~/.local/opt/lsfactory` by default, writes a launcher to `~/.local/bin/lsfactory` and creates an application-menu entry. You can choose another folder. Existing user files in a managed installation are preserved. The generated `uninstall.sh` removes managed app files and leaves personal projects/settings intact.
+
+If the system cannot mount AppImages, start the installer with `--appimage-extract-and-run`. The installed launcher uses extraction mode automatically and does not need a FUSE mount. Releases are development prereleases and are unsigned. Verify the corresponding SHA-256 checksum. The packaging workflow installs both installers into temporary locations and starts the resulting application before publishing.

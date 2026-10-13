@@ -9,3 +9,5 @@ The user has explicitly authorized ongoing deployment and releases for large mil
 Include downloadable original PNG screenshots in release packages. Local workspace links and sandbox image links did not work in the user's viewer; provide GitHub file/download links or release asset links. `screenshots/` is a published set of actual UI captures.
 
 Use existing platform Git authentication and injected credential bindings. Do not print credentials or request replacement tokens just because an operation fails. Publication of the cloud environment itself is a separate product action; saved configuration drafts do not prove publication.
+
+Release packaging requirements: Windows releases include a tested Setup.exe installer; Linux releases include a genuine Installer.AppImage that opens an installation wizard and installs the application, launcher and menu entry. A portable app renamed to .AppImage does not meet this requirement. Validate install/update, payload checksum checks, preservation of user files and startup of the installed application before publishing.

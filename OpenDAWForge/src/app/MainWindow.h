@@ -22,6 +22,7 @@ class Workspace final : public juce::Component,
     bool isInterestedInFileDrag(const juce::StringArray &) override;
     void filesDropped(const juce::StringArray &, int, int) override;
     bool smokeTest(const juce::File &directory);
+    void openProject(const juce::File &);
 
   private:
     enum class View

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LS Factory
+Comment=Native pattern workstation
+Exec=lsfactory %f
+Icon=lsfactory
+Terminal=false
+Categories=AudioVideo;Audio;
+MimeType=application/x-lsfactory-project;

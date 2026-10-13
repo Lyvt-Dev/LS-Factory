@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LS Factory Setup
+Comment=Install LS Factory for the current user
+Exec=lsfactory-installer
+Icon=lsfactory
+Terminal=false
+Categories=AudioVideo;Utility;

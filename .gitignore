@@ -6,3 +6,5 @@ OpenDAWForge/libs/JUCE/
 *.wav
 dist/
 !OpenDAWForge/tests/fixtures/*.odaw
+__pycache__/
+*.pyc
