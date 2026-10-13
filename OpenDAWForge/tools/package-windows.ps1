@@ -22,7 +22,7 @@ try {
     $process = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$installed`"") -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Installer smoke failed: $($process.ExitCode)" }
     $app = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--export-json', "`"$temporary/project.json`"") -PassThru -Wait
-    if ($app.ExitCode -ne 0 -or !(Test-Path "$temporary/project.json")) { throw 'Installed app smoke failed' }
+    if ($app.ExitCode -ne 0 -or !(Test-Path "$temporary/project.json")) { throw "Installed app smoke failed: exit=$($app.ExitCode), jsonExists=$(Test-Path "$temporary/project.json"), files=$((Get-ChildItem $installed -Name) -join ',')" }
     $uninstaller = Start-Process "$installed/unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
     if ($uninstaller.ExitCode -ne 0) { throw 'Uninstall smoke failed' }
     Write-Host $installer
