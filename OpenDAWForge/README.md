@@ -77,7 +77,7 @@ Original repository code is MIT-licensed. JUCE remains under its own AGPLv3/comm
 
 Pushes to `main` run Linux, Windows and macOS native release builds and tests and upload downloadable application archives as GitHub Actions artifacts. Version tags `v*` run the same validation and publish a GitHub prerelease only after all build jobs pass. Release archives include the original PNG screenshots, dependency notices, commit/version metadata and SHA-256 checksum files. This desktop workflow distributes native applications; there is no web service to deploy.
 
-The workstation milestone is `v0.2.0`; installer delivery is `v0.2.1`. Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
+The workstation milestone is `v0.2.0`; installer delivery is `v0.2.2` (the `v0.2.1` Windows startup check failed, so that tag was not released). Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
 
 VST3 integration validation uses an actual test-only shared-library plugin:
 

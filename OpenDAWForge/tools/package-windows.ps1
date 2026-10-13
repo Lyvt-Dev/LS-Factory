@@ -23,6 +23,9 @@ try {
     if ($process.ExitCode -ne 0) { throw "Installer smoke failed: $($process.ExitCode)" }
     $app = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--export-json', "`"$temporary/project.json`"") -PassThru -Wait
     if ($app.ExitCode -ne 0 -or !(Test-Path "$temporary/project.json")) { throw "Installed app smoke failed: exit=$($app.ExitCode), jsonExists=$(Test-Path "$temporary/project.json"), files=$((Get-ChildItem $installed -Name) -join ',')" }
+    $smokeDirectory = Join-Path $temporary 'installed-smoke'
+    $smoke = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--smoke-test', "`"$smokeDirectory`"") -PassThru -Wait
+    if ($smoke.ExitCode -ne 0 -or !(Test-Path "$smokeDirectory/playlist.png")) { throw "Installed GUI/WAV smoke failed: exit=$($smoke.ExitCode)" }
     $uninstaller = Start-Process "$installed/unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
     if ($uninstaller.ExitCode -ne 0) { throw 'Uninstall smoke failed' }
     Write-Host $installer

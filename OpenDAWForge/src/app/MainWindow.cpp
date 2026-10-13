@@ -1476,12 +1476,12 @@ void Workspace::chooseExport()
                               self->workers_.addJob(
                                   [self, p, file]
                                   {
-                                      AudioEngine offline;
+                                      auto offline = std::make_unique<AudioEngine>();
                                       auto serialised = p;
                                       auto r = self ? self->audio_.capturePlugins(serialised)
                                                     : Result::failure("Workspace closed");
                                       if (r)
-                                          r = offline.exportWave(serialised, file);
+                                          r = offline->exportWave(serialised, file);
                                       juce::MessageManager::callAsync(
                                           [self, r, file]
                                           {
@@ -1712,17 +1712,17 @@ bool Workspace::smokeTest(const juce::File &directory)
         if (!juce::PNGImageFormat().writeImageToStream(image, out))
             return false;
     }
-    AudioEngine recorder;
+    auto recorder = std::make_unique<AudioEngine>();
     const auto recording = directory.getChildFile("input-test.wav");
-    if (!recorder.startRecording(recording, true))
+    if (!recorder->startRecording(recording, true))
         return false;
     std::array<float, 512> input{};
     for (std::size_t i = 0; i < input.size(); ++i)
         input[i] = static_cast<float>(std::sin(i * 0.05)) * 0.25f;
     const float *pointers[] = {input.data()};
     for (int block = 0; block < 10; ++block)
-        recorder.captureInput(pointers, 1, 512);
-    recorder.stopRecording();
+        recorder->captureInput(pointers, 1, 512);
+    recorder->stopRecording();
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(recording));

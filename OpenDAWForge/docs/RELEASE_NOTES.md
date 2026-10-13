@@ -1,10 +1,12 @@
-LS Factory 0.2.1 is a native desktop development milestone.
+LS Factory 0.2.2 is a native desktop development milestone.
 
 - Reference-inspired playlist, step rack, piano roll and mixer with original synthesis and sample playback.
 - Isolated VST3 effect scanning, up to eight stereo master inserts, native/generic plugin editors and bypass.
 - Opaque plugin-state and normalized parameter persistence in compressed project format v4, with migration of existing v3 sessions.
 - Actual VST3 fixture tests: gain processing, two-insert order, bypass, state restoration and transactional failed replacement.
+- Fixed Windows startup and export stack overflow by allocating large temporary audio engines on the heap; installed-app GUI/WAV smoke tests now gate Windows packaging.
 - Windows Setup.exe with per-user installation, uninstaller and optional shortcuts/project association.
+- Linux desktop shortcuts use the system desktop directory and are removed by the uninstaller without deleting user files.
 - Linux Installer.AppImage with a native installation wizard, checksum-verified embedded program payload, user installation, menu entry, launcher and update preservation checks.
 - Native build artifacts and downloadable PNG screenshots. Each archive includes commit/version metadata, dependency notices and a SHA-256 checksum.
 

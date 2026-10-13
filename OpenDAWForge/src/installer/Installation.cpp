@@ -100,6 +100,10 @@ Outcome install(const Options &o)
     info->setProperty("sha256", expected);
     if (!stagedRecord.replaceWithText(juce::JSON::toString(juce::var(info.release()))))
         return fail("Installationsdaten konnten nicht gespeichert werden.");
+    const auto desktop = o.home == juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                             ? juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+                                   .getChildFile("LSFactory.desktop")
+                             : o.home.getChildFile("Desktop/LSFactory.desktop");
     const auto uninstall = o.destination.getChildFile("uninstall.sh"),
                stagedUninstall = stage.getChildFile("uninstall.sh");
     const auto uninstallText =
@@ -111,7 +115,9 @@ Outcome install(const Options &o)
         shellQuote(bin.getFullPathName()) + " 2>/dev/null; then rm -f -- " +
         shellQuote(bin.getFullPathName()) + "; fi\n" + "if grep -q 'Managed by dev.lsfactory.installer' " +
         shellQuote(menu.getFullPathName()) + " 2>/dev/null; then rm -f -- " +
-        shellQuote(menu.getFullPathName()) + "; fi\n" + "rm -f -- " +
+        shellQuote(menu.getFullPathName()) + "; fi\n" + "if grep -q 'Managed by dev.lsfactory.installer' " +
+        shellQuote(desktop.getFullPathName()) + " 2>/dev/null; then rm -f -- " +
+        shellQuote(desktop.getFullPathName()) + "; fi\n" + "rm -f -- " +
         shellQuote(installed.getFullPathName()) + " " + shellQuote(icon.getFullPathName()) + " " +
         shellQuote(record.getFullPathName()) + " " + shellQuote(uninstall.getFullPathName()) + "\nrmdir -- " +
         shellQuote(o.destination.getFullPathName()) +
@@ -124,7 +130,6 @@ Outcome install(const Options &o)
                                    {stagedLauncher, bin},      {stagedMenu, menu}};
     if (o.desktopShortcut)
     {
-        const auto desktop = o.home.getChildFile("Desktop/LSFactory.desktop");
         if (desktop.exists() && !desktop.loadFileAsString().contains(marker))
             return fail("Eine andere Desktop-Verknuepfung ist vorhanden.");
         files.push_back({stagedMenu, desktop});
@@ -176,13 +181,15 @@ bool selfTest(const juce::File &payload, const juce::File &root)
         return false;
     if (root.createDirectory().failed())
         return false;
-    Options options{root.getChildFile("home"), root.getChildFile("program"), payload, false};
+    Options options{root.getChildFile("home"), root.getChildFile("program"), payload, true};
     auto result = install(options);
     if (result.result.failed())
     {
         std::cerr << result.result.getErrorMessage() << std::endl;
         return false;
     }
+    if (!options.home.getChildFile("Desktop/LSFactory.desktop").existsAsFile())
+        return false;
     const auto custom = options.destination.getChildFile("my-project.txt");
     custom.replaceWithText("preserve");
     if (install(options).result.failed() || custom.loadFileAsString() != "preserve")

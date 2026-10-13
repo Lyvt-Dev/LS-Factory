@@ -49,6 +49,8 @@ with tempfile.TemporaryDirectory(prefix='lsfactory-appimage-') as directory:
     # Use the same Installation implementation before creating the final image.
     test=temporary/'installer-test'
     subprocess.run(['xvfb-run','-a',str(build/'LSFactoryInstaller_artefacts/Release/LS Factory Setup'),'--self-test',str(payload),str(test)],env=environment,check=True)
+    subprocess.run(['/bin/sh',str(test/'program/uninstall.sh')],input='j\n',text=True,env=environment,check=True)
+    if (test/'home/Desktop/LSFactory.desktop').exists() or (test/'program/my-project.txt').read_text()!='preserve':raise RuntimeError('Desktop uninstall did not preserve user files or remove its shortcut')
     installer=result=None
     installerDir,installer=appimage(build/'LSFactoryInstaller_artefacts/Release/LS Factory Setup',project/'packaging/linux/installer.desktop','lsfactory-installer')
     artifact=output/f'LSFactory-{version}-linux-x64-Installer.AppImage'

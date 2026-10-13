@@ -12,7 +12,7 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
     }
     const juce::String getApplicationVersion() override
     {
-        return "0.2.1";
+        return "0.2.2";
     }
     bool moreThanOneInstanceAllowed() override
     {
@@ -36,8 +36,8 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
         {
             const auto directory = juce::File(args[2]);
             directory.createDirectory();
-            AudioEngine engine;
-            const bool result = engine.pluginSmokeTest(juce::File(args[1]), directory);
+            auto engine = std::make_unique<AudioEngine>();
+            const bool result = engine->pluginSmokeTest(juce::File(args[1]), directory);
             std::cout << (result ? "VST3 scan / processing / bypass / state roundtrip passed"
                                  : "VST3 smoke failed")
                       << std::endl;
@@ -54,8 +54,8 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
         }
         if (args.size() >= 2 && args[0] == "--render-demo")
         {
-            AudioEngine engine;
-            const auto result = engine.exportWave(makeDemoProject(), juce::File(args[1]));
+            auto engine = std::make_unique<AudioEngine>();
+            const auto result = engine->exportWave(makeDemoProject(), juce::File(args[1]));
             std::cout << (result ? "WAV rendered" : result.error) << std::endl;
             setApplicationReturnValue(result ? 0 : 1);
             quit();
