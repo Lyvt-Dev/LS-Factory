@@ -10,4 +10,4 @@ On GitHub, open a PNG and use **Download raw file** to download the original ima
 - [VST3 test plugin editor](LS-Factory-Plugin-Editor.png)
 - [Linux installation wizard](LS-Factory-Linux-Installer.png)
 
-Factory 0.4.0: [Library](LS-Factory-Factory-Library.png), [Loop Starter](LS-Factory-Loop-Starter.png), [Update settings](LS-Factory-Update-Settings.png). Original native UI captures from the Release smoke run.
+Factory 0.4.1: [Library](LS-Factory-Factory-Library.png), [Loop Starter](LS-Factory-Loop-Starter.png), [Update settings](LS-Factory-Update-Settings.png). Original native UI captures from the Release smoke run.

@@ -106,4 +106,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" dist/* --verify-tag --title "LS Factory $RELEASE_TAG" --notes-file OpenDAWForge/docs/RELEASE_NOTES.md --prerelease --latest=false
+          gh release create "$RELEASE_TAG" dist/* screenshots/*.png --verify-tag --title "LS Factory $RELEASE_TAG" --notes-file OpenDAWForge/docs/RELEASE_NOTES.md --prerelease --latest=false

@@ -13,7 +13,7 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
     }
     const juce::String getApplicationVersion() override
     {
-        return "0.4.0";
+        return "0.4.1";
     }
     bool moreThanOneInstanceAllowed() override
     {

@@ -4,3 +4,5 @@ libs/JUCE/
 *.wav
 *.autosave
 !tests/fixtures/*.odaw
+
+!resources/factory/*.wav

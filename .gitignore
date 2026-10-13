@@ -8,3 +8,5 @@ dist/
 !OpenDAWForge/tests/fixtures/*.odaw
 __pycache__/
 *.pyc
+
+!OpenDAWForge/resources/factory/*.wav
