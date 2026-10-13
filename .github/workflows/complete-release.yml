@@ -6,6 +6,9 @@ on:
         description: Verified release tag with a deployment payload branch
         required: true
         default: v0.4.4
+      artifact_run_id:
+        description: Optional completed native build run with all platforms validated
+        required: false
   workflow_run:
     workflows: [Native builds and releases]
     types: [completed]
@@ -14,7 +17,7 @@ permissions:
   actions: read
 jobs:
   publish-linux-now:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.artifact_run_id == ''
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -38,14 +41,14 @@ jobs:
             gh release create "$RELEASE_TAG" deploy-payload/* screenshots/*.png --verify-tag --title "LS Factory $RELEASE_TAG" --notes-file OpenDAWForge/docs/RELEASE_NOTES.md --prerelease --latest=false
           fi
   complete-tested-platforms:
-    if: github.event_name == 'workflow_run' && startsWith(github.event.workflow_run.head_branch, 'v') && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'success'
+    if: (github.event_name == 'workflow_dispatch' && inputs.artifact_run_id != '') || (github.event_name == 'workflow_run' && startsWith(github.event.workflow_run.head_branch, 'v') && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'success')
     runs-on: ubuntu-24.04
     steps:
       - name: Require all three platform build and installer jobs to pass
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ID: ${{ inputs.artifact_run_id || github.event.workflow_run.id }}
         run: |
           gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs" > jobs.json
           python - <<'PY'
@@ -55,23 +58,27 @@ jobs:
           PY
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ inputs.tag || github.event.workflow_run.head_branch }}
           fetch-depth: 0
       - name: Verify immutable tag matches the tested source
         env:
-          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: test "$(git rev-parse HEAD)" = "$TESTED_SHA"
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ inputs.artifact_run_id || github.event.workflow_run.id }}
+        run: |
+          TESTED_SHA=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq '.head_sha')
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ inputs.artifact_run_id || github.event.workflow_run.id }}
           path: dist
           merge-multiple: true
       - name: Complete the published milestone with tested platform installers
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
