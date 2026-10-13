@@ -8,7 +8,7 @@ struct Page
 {
     const char *title, *body;
 };
-constexpr std::array<Page, 12> pages{
+constexpr std::array<Page, 16> pages{
     {{"1. Dein erstes Projekt",
       "LS Factory startet mit einem leeren Projekt: keine Tracks, keine Instrumente und keine vorgegebenen "
       "Noten. Pattern 1 ist ein leerer Baustein.\n\nKlicke + TRACK und waehle Kick, Snare, Hi-hat, Synth "
@@ -44,7 +44,9 @@ constexpr std::array<Page, 12> pages{
       "gemeinsam."},
      {"6. Melodien im Piano roll",
       "Waehle einen Synth-Kanal und das gewuenschte Pattern. Oeffne Piano roll (F7). Klicke ins Notenraster, "
-      "um eine Note zu setzen. Rechtsklick entfernt sie.\n\nZiehe eine Note, um Tonhoehe und Startzeit zu "
+      "um eine Note zu setzen. Rechtsklick entfernt sie. Ein Klick auf eine Klaviertaste, eine neue oder "
+      "ausgewaehlte Note spielt den Klang kurz vor, ohne den Song zu starten oder aufzunehmen.\n\nZiehe eine "
+      "Note, um Tonhoehe und Startzeit zu "
       "aendern. Ziehe ihre rechte Kante fuer die Laenge. Die Balken unten steuern die Anschlagstaerke. Das "
       "Mausrad scrollt die Tonhoehen; Ctrl/Cmd+Mausrad zoomt die Zeitachse.\n\nCtrl/Cmd+Q quantisiert den "
       "ausgewaehlten Kanal auf Viertelschritte. Ctrl/Cmd+Pfeil hoch/runter transponiert um einen Halbton, "
@@ -91,7 +93,38 @@ constexpr std::array<Page, 12> pages{
       "speichere .odaw und exportiere WAV.\n\nSpace Wiedergabe | F1 Tutorial | F5 Playlist | F6 Rack | F7 "
       "Piano roll | F9 Mixer | F11 Vollbild\nCtrl/Cmd+S Speichern | +O Oeffnen | +Z Undo | +Shift+Z Redo | "
       "+Shift+P Pattern | +Shift+T Playlist-Spur | +Shift+N Synth-Kanal\n\nDieses Tutorial ist jederzeit "
-      "ueber HELP verfuegbar. Das Kapitelmenue springt direkt zum gewuenschten Thema."}}};
+      "ueber HELP verfuegbar. Das Kapitelmenue springt direkt zum gewuenschten Thema."},
+     {"13. Factory Library",
+      "FACTORY oeffnet Presets, Samples, Loops und One-Shots. Suche und filtere nach Typ, Kategorie, Genre, "
+      "Instrument, Stimmung, BPM und Tags. BPM kann auch eingetippt werden.\n\nPreview oder Doppelklick "
+      "hoert einen Sound vor, ohne das Projekt zu aendern. Favourite markiert ihn; Recent zeigt verwendete "
+      "Sounds. + Collection erstellt eigene Sammlungen.\n\nLoad to project bietet neue Spuren, "
+      "Kanalersetzung oder das aktuelle Pattern. Ziehe Sounds direkt ins Rack oder in die Playlist. "
+      "Audio-Loops sollten zur Projekt-BPM passen."},
+     {"14. Presets und eigene Packs",
+      "Volume, Pan, Filter, Delay, Reverb, Compression und Drive bearbeiten den ausgewaehlten Sound. Preview "
+      "hoert Aenderungen; Save preset speichert eine eigene Kopie. Die Factory-Definition bleibt "
+      "erhalten.\n\nPacks / downloads trennt kostenlose Factory-Inhalte, eigene Packs und optionales "
+      "Premium. Eigene freie Packs werden per JSON-Manifest und Audiodateien importiert, geprueft und "
+      "dauerhaft lokal gespeichert. Export/Import favourites uebertraegt Favoriten, Verlauf und "
+      "Sammlungen.\n\nNoch kein Cloud-/Shop-Dienst ist verbunden. Premium-Kaeufe, Lizenzen und "
+      "Synchronisierung sind daher deaktiviert; lokale Sounds funktionieren ohne Konto."},
+     {"15. Loop Starter",
+      "LOOP STARTER erzeugt acht Beats aus Genre, BPM, Grundton, Dur/Moll und Stimmung. Generate erzeugt "
+      "eine neue Variation. Waehle eine Zeile und Replace selected loop, um nur diesen Teil zu "
+      "ersetzen.\n\nPreview idea hoert die gesamte Idee, Preview selected nur den Sound. Das bestehende "
+      "Projekt und seine Songposition bleiben beim Vorhoeren unveraendert.\n\nAdd to pattern fuegt ein "
+      "kombiniertes Pattern hinzu. Add to arrangement legt separate Spuren und Patterns an. Vorhandene "
+      "Inhalte bleiben erhalten. Adopt this BPM ist anfangs aus: aktiviere es bewusst, wenn du das "
+      "Projekttempo aendern willst. Stoppe Aufnahmen vor strukturellem Laden."},
+     {"16. Programm-Updates",
+      "SETTINGS bietet Jetzt pruefen, die Update-Suche beim Start und optional automatische Installation. "
+      "Automatische Installation ist anfangs aus. Bei einem neuen Release wird der Toolbar-Knopf zu "
+      "UPDATE.\n\nDownloads werden geprueft. Speichere dein Projekt, stoppe Wiedergabe/Aufnahme und "
+      "schliesse Library-/Plugin-Fenster vor der Installation. Windows/Linux warten auf die alte App, "
+      "installieren und starten neu. Projekte, Library-Cache und Einstellungen bleiben "
+      "erhalten.\n\nVersionen ohne Updater muessen einmal per neuem Installer aktualisiert werden. Auf macOS "
+      "erfolgt die Installation derzeit manuell ueber die Release-Seite."}}};
 } // namespace
 TutorialPanel::TutorialPanel()
 {
@@ -117,7 +150,7 @@ void TutorialPanel::showPage(int page)
     page_ = juce::jlimit(0, static_cast<int>(pages.size()) - 1, page);
     const auto &p = pages[static_cast<size_t>(page_)];
     heading_.setText(p.title, juce::dontSendNotification);
-    body_.setText(p.body, false);
+    body_.setText(juce::String::fromUTF8(p.body), false);
     chapters_.setSelectedId(page_ + 1, juce::dontSendNotification);
     progress_.setText(juce::String(page_ + 1) + " / " + juce::String(pages.size()),
                       juce::dontSendNotification);

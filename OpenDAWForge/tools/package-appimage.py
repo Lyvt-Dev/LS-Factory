@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a genuine installer AppImage containing the verified workstation payload."""
 from pathlib import Path
-import argparse,hashlib,os,re,shutil,subprocess,tempfile,urllib.request
+import argparse,hashlib,os,re,shutil,subprocess,tempfile,urllib.request,threading
 parser=argparse.ArgumentParser()
 parser.add_argument('--build-dir',type=Path,required=True)
 parser.add_argument('--output-dir',type=Path,required=True)
@@ -37,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix='lsfactory-appimage-') as directory:
     notices.mkdir(parents=True)
     shutil.copy2(project/'LICENSE',notices/'LICENSE')
     shutil.copytree(project/'docs',notices/'docs')
+    shutil.copy2(project/'resources/factory/LICENSE.txt',notices/'FACTORY-CONTENT-LICENSE.txt')
     for source in [build/'_deps/juce-src/LICENSE.md',project/'libs/JUCE/LICENSE.md',Path('/workspace/.tools/JUCE/LICENSE.md')]:
         if source.exists():shutil.copy2(source,notices/'JUCE-LICENSE.md');break
     else:raise RuntimeError('JUCE licence notice missing')
@@ -71,6 +72,15 @@ with tempfile.TemporaryDirectory(prefix='lsfactory-appimage-') as directory:
     subprocess.run(['xvfb-run','-a',str(artifact),'--appimage-extract-and-run','--install-prefix',str(installed)],env=environment,check=True)
     subprocess.run(['xvfb-run','-a',str(installed/'home/.local/bin/lsfactory'),'--export-json',str(temporary/'installed-project.json')],env=environment,check=True)
     if not (temporary/'installed-project.json').exists():raise RuntimeError('Installed workstation failed to run')
+    # Exercise the silent update path in the same managed installation and wait for the old process.
+    (installed/'program/update-project.txt').write_text('keep during update')
+    old_process=subprocess.Popen(['sleep','1'])
+    reaper=threading.Thread(target=old_process.wait);reaper.start()
+    subprocess.run(['xvfb-run','-a',str(artifact),'--appimage-extract-and-run','--update-prefix',str(installed),'--wait-pid',str(old_process.pid)],env=environment,check=True)
+    reaper.join()
+    if (installed/'program/update-project.txt').read_text()!='keep during update':raise RuntimeError('Automatic update deleted a user project')
+    subprocess.run(['xvfb-run','-a',str(installed/'home/.local/bin/lsfactory'),'--export-json',str(temporary/'updated-project.json')],env=environment,check=True)
+    if not (temporary/'updated-project.json').exists():raise RuntimeError('Updated app did not restart correctly')
     # Exercise the actual generated uninstaller; unrelated files must survive.
     (installed/'program/my-project.txt').write_text('keep')
     subprocess.run(['/bin/sh',str(installed/'program/uninstall.sh')],input='j\n',text=True,env=environment,check=True)

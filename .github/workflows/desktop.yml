@@ -29,7 +29,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libasound2-dev libfreetype-dev libfontconfig-dev libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev zlib1g-dev xvfb xauth desktop-file-utils
+          sudo apt-get install -y clang cmake ninja-build pkg-config libasound2-dev libfreetype-dev libfontconfig-dev libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev zlib1g-dev libcurl4-openssl-dev xvfb xauth desktop-file-utils
       - name: macOS prerequisites
         if: runner.os == 'macOS'
         run: brew install ninja
@@ -58,6 +58,19 @@ jobs:
         run: |
           xvfb-run -a 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --smoke-test "$PWD/OpenDAWForge/build/ci/smoke"
           xvfb-run -a 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --plugin-smoke-test "$PWD/OpenDAWForge/build/ci/ForgeGainFixture_artefacts/Release/VST3/Forge Gain Fixture.vst3" "$PWD/OpenDAWForge/build/ci/plugin-smoke"
+      - name: Factory library and verified update tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --factory-smoke-test "$PWD/OpenDAWForge/build/ci/factory-smoke"
+          'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory' --update-smoke-test "$PWD/OpenDAWForge/build/ci/update-smoke"
+      - name: Factory library and verified update tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory.exe' --factory-smoke-test "$PWD/OpenDAWForge/build/ci/factory-smoke"
+          if ($LASTEXITCODE -ne 0) { throw 'Factory test failed' }
+          & 'OpenDAWForge/build/ci/LSFactory_artefacts/Release/LS Factory.exe' --update-smoke-test "$PWD/OpenDAWForge/build/ci/update-smoke"
+          if ($LASTEXITCODE -ne 0) { throw 'Update test failed' }
       - name: Package desktop app
         run: python OpenDAWForge/tools/package-release.py --build-dir OpenDAWForge/build/ci --output-dir dist --platform ${{ matrix.platform }}
       - name: Build and exercise Linux installer AppImage

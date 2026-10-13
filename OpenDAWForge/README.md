@@ -1,6 +1,6 @@
 # LS Factory — native pattern workstation
 
-LS Factory 0.3 is a working C++20/JUCE desktop foundation for the supplied DAW specification. It starts empty; PROJECT offers an original synthesized demonstration session. The reference informs the dense slate workspace, left browser, top transport, coloured arrangement clips, floating step rack, piano keyboard and velocity lane. No reference audio, graphics, proprietary plugins or algorithms are included.
+LS Factory 0.4 is a working C++20/JUCE desktop foundation for the supplied DAW specification. It starts empty; PROJECT offers an original synthesized demonstration session. The reference informs the dense slate workspace, left browser, top transport, coloured arrangement clips, floating step rack, piano keyboard and velocity lane. No reference audio, graphics, proprietary plugins or algorithms are included.
 
 This is an implementation milestone, not the complete production DAW in the specification. See [implementation status](docs/STATUS.md) for the exact boundary.
 
@@ -77,7 +77,7 @@ Original repository code is MIT-licensed. JUCE remains under its own AGPLv3/comm
 
 Pushes to `main` run Linux, Windows and macOS native release builds and tests and upload downloadable application archives as GitHub Actions artifacts. Version tags `v*` run the same validation and publish a GitHub prerelease only after all build jobs pass. Release archives include the original PNG screenshots, dependency notices, commit/version metadata and SHA-256 checksum files. This desktop workflow distributes native applications; there is no web service to deploy.
 
-The workstation milestone is `v0.2.0`; the workspace/installer update is `v0.3.0` (the `v0.2.1` Windows startup check failed, so that tag was not released). Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
+The workstation milestone is `v0.2.0`; the workspace/installer update is `v0.4.0` (the `v0.2.1` Windows startup check failed, so that tag was not released). Later large milestones increment the minor version; fixes increment the patch. Never move a published tag. If a tagged build fails, fix the failure and publish a new version. The workflow's GitHub token is scoped to read contents for builds and write contents only for the release job.
 
 VST3 integration validation uses an actual test-only shared-library plugin:
 
@@ -102,4 +102,15 @@ The application now starts empty; the empty Pattern 1 contains no notes. Use **+
 
 Drag a panel title bar to move the Rack, Playlist, Piano roll or Mixer within the app, and drag its lower right corner to resize. Each view retains its position during the session; **LAYOUT** restores default positions. Mouse-wheel scrolling inside the Rack accesses additional channels. The main app uses its own draggable title bar with window controls. **F11** toggles fullscreen and **Escape** exits it.
 
-**HELP / F1** opens the twelve-chapter German tutorial, with back/next navigation and a chapter selector. It covers the complete implemented workflow from an empty session through sequencing, arranging, recording, plugins and WAV export. Unimplemented DAW features remain documented in STATUS.md.
+**HELP / F1** opens the sixteen-chapter German tutorial, with back/next navigation and a chapter selector. It covers the complete implemented workflow from an empty session through sequencing, arranging, recording, plugins and WAV export. Unimplemented DAW features remain documented in STATUS.md.
+
+
+## Factory sounds, ideas and updates
+
+**FACTORY** opens the searchable library of 46 original sounds/presets with metadata filters, auditioning, favourites, recent sounds, collections, a preset editor and own-pack import. Drag sounds into the Rack or Playlist, or choose a load destination. **LOOP STARTER** generates and previews eight-beat MIDI ideas; add them to a pattern or arrangement while keeping previous project content. Optional BPM adoption is explicit. See [Factory modules, workflow and pack format](docs/FACTORY.md).
+
+Piano-roll key clicks and note placement/selection audition the selected instrument briefly. Preview notes do not start the transport, duplicate MIDI recordings or end a sequenced note of the same pitch.
+
+**SETTINGS** controls startup checking and manual/automatic application updates. Automatic installation is opt-in and waits for a saved/idle project. Windows/Linux installer upgrades restart the app and preserve user data. Mac installation remains manual. See [Update behavior and verification](docs/UPDATES.md).
+
+The local Factory Library needs no account or backend. Premium/store synchronization has a provider interface, but no service is connected; no premium products or entitlements are invented.

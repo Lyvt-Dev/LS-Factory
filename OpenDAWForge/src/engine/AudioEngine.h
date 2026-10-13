@@ -28,6 +28,20 @@ class AudioEngine final : public juce::AudioIODeviceCallback, public juce::MidiI
     }
     void captureInput(const float *const *, int channels, int samples) noexcept;
     std::atomic<std::uint64_t> recordDrops{0};
+    // Single producer: the workspace worker. Prepared previews swap at block boundaries;
+    // retired renderers are deleted on the worker, never in the audio callback.
+    Result audition(Channel, SampleData = {}, double seconds = 3.0);
+    Result auditionProject(const Project &, PatternID, double seconds);
+    void stopAudition() noexcept
+    {
+        stopAudition_.store(true);
+        auditionActive_.store(false);
+    }
+    bool auditionActive() const noexcept
+    {
+        return auditionActive_.load();
+    }
+    static Result decodeAudio(const juce::File &, SampleData &);
     Result loadSample(std::size_t channel, const juce::File &, bool suspendDevice = true);
     Result restoreSamples(const Project &, bool suspendDevice = true);
     PluginManager plugins;
@@ -39,6 +53,18 @@ class AudioEngine final : public juce::AudioIODeviceCallback, public juce::MidiI
     Result exportWave(const Project &, const juce::File &);
 
   private:
+    struct Audition
+    {
+        RenderEngine engine;
+        std::int64_t remaining = 0;
+    };
+    std::atomic<Audition *> pendingAudition_{nullptr};
+    Audition *activeAudition_ = nullptr;
+    SpscQueue<Audition *, 32> retiredAuditions_;
+    std::atomic<bool> stopAudition_{false}, auditionActive_{false};
+    std::atomic<double> auditionRate_{48000};
+    std::array<float, 512> auditionLeft_{}, auditionRight_{};
+    void mixAudition(float *, float *, int) noexcept;
     juce::TimeSliceThread writerThread_{"LS Factory recorder"};
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer_;
     std::atomic<bool> recording_{false};

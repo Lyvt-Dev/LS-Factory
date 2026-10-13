@@ -1,11 +1,13 @@
 #pragma once
 #include "commands/UndoStack.h"
 #include "engine/AudioEngine.h"
+#include "library/Library.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 namespace forge
 {
 class Workspace final : public juce::Component,
                         public juce::FileDragAndDropTarget,
+                        public juce::DragAndDropTarget,
                         private juce::AudioProcessorListener,
                         private juce::Timer
 {
@@ -22,6 +24,8 @@ class Workspace final : public juce::Component,
     bool isInterestedInFileDrag(const juce::StringArray &) override;
     void filesDropped(const juce::StringArray &, int, int) override;
     bool smokeTest(const juce::File &directory);
+    bool isInterestedInDragSource(const juce::DragAndDropTarget::SourceDetails &) override;
+    void itemDropped(const juce::DragAndDropTarget::SourceDetails &) override;
     void openProject(const juce::File &);
 
   private:
@@ -40,9 +44,20 @@ class Workspace final : public juce::Component,
     juce::TextButton playlist_{"Playlist  F5"}, piano_{"Piano roll  F7"}, mixer_{"Mixer  F9"},
         rackButton_{"Channel rack  F6"}, undoButton_{"UNDO"}, redoButton_{"REDO"};
     juce::TextButton newProject_{"PROJECT"}, addTrack_{"+ TRACK"}, help_{"HELP  F1"}, layout_{"LAYOUT"},
-        fullscreen_{"FULL  F11"};
+        fullscreen_{"FULL  F11"}, updates_{"SETTINGS"}, factory_{"FACTORY"}, ideas_{"LOOP STARTER"};
     std::unique_ptr<juce::DocumentWindow> tutorialWindow_;
     void showTutorial();
+    void showLibrary();
+    void showLoopStarter();
+    void auditionEntry(library::Entry);
+    void auditionIdea(library::Idea);
+    void loadLibraryEntry(library::Entry, int destination, int track = -1, double beat = 0);
+    void loadIdea(library::Idea, bool arrangement, bool tempo);
+    std::unique_ptr<juce::DocumentWindow> libraryWindow_, ideaWindow_;
+    juce::File libraryRoot_ = library::Library::defaultRoot();
+    void showUpdates(bool visible = true);
+    std::unique_ptr<juce::DocumentWindow> updateWindow_;
+    bool readyForUpdate() const;
     void projectMenu();
     void replaceProject(bool demo);
     void addTrack(InstrumentType);
@@ -102,7 +117,7 @@ class Workspace final : public juce::Component,
     {
         return preview_ ? *preview_ : project_;
     }
-    void restoreSamplesAsync();
+    void restoreSamplesAsync(bool preservePosition = false);
     juce::TooltipWindow tooltips_{this, 500};
     juce::Rectangle<int> browserBounds_, editorBounds_, rackBounds_;
     void timerCallback() override;
@@ -125,6 +140,10 @@ class Workspace final : public juce::Component,
     void importSample(const juce::File &, int channel);
     void saveTo(const juce::File &, bool autosave = false);
     void transportToggle();
+    void previewNote(int pitch, float velocity = 0.8f);
+    bool stopPreview();
+    int previewPitch_ = -1, previewChannel_ = 0;
+    double previewUntil_ = 0;
     juce::Rectangle<int> timeline() const;
 };
 class MainWindow final : public juce::DocumentWindow

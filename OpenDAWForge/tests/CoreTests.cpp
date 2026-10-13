@@ -396,7 +396,7 @@ TEST_CASE("Plugin slots roundtrip opaque state and bypass", "[persistence][plugi
 {
     auto p = makeDemoProject();
     p.masterInserts.push_back(
-        {PluginInstanceID{p.nextId()}, "Fixture", "<PLUGIN name=\"Fixture\"/>", {0, 255, 1, 128}, true});
+        {PluginInstanceID{p.nextId()}, "Fixture", "<PLUGIN name=\"Fixture\"/>", {0, 255, 1, 128}, true, {}});
     p.masterInserts[0].normalizedParameters = {0.25f, 1.0f};
     auto file = std::filesystem::temp_directory_path() / "forge-plugin-roundtrip.odaw";
     REQUIRE(saveProject(p, file));
@@ -414,4 +414,79 @@ TEST_CASE("Version three sessions migrate without plugin inserts", "[persistence
     REQUIRE(loaded.validate());
     REQUIRE(loaded.masterInserts.empty());
     REQUIRE(loaded.channels.size() == 6);
+}
+
+TEST_CASE("Note audition sounds while paused without advancing or recording", "[engine][preview]")
+{
+    auto renderer = std::make_unique<RenderEngine>();
+    renderer->prepare(48000);
+    PlaybackSnapshot state;
+    state.channelCount = 1;
+    REQUIRE(renderer->publish(state));
+    renderer->setRecording(true);
+    REQUIRE(renderer->midi({72, 0.8f, true, 0, false}));
+    std::array<float, 512> left{}, right{};
+    renderer->render(left.data(), right.data(), 512);
+    double energy = 0;
+    for (float value : left)
+        energy += value * value;
+    REQUIRE(energy > 0.001);
+    REQUIRE_FALSE(renderer->playing());
+    REQUIRE(renderer->positionBeat() == 0);
+    CapturedMidi captured;
+    REQUIRE_FALSE(renderer->capture(captured));
+    REQUIRE(renderer->midi({72, 0, false, 0, false}));
+    for (int block = 0; block < 100; ++block)
+        renderer->render(left.data(), right.data(), 512);
+    for (float value : left)
+        REQUIRE(std::abs(value) < 0.000001f);
+    REQUIRE_FALSE(renderer->capture(captured));
+    REQUIRE(renderer->midi({60, 0.7f, true, 0}));
+    renderer->render(left.data(), right.data(), 512);
+    REQUIRE(renderer->capture(captured));
+    REQUIRE(captured.pitch == 60);
+    REQUIRE(captured.on);
+    REQUIRE(renderer->midi({60, 0, false, -1, false}));
+    REQUIRE(renderer->midi({60, 1, true, static_cast<int>(maxChannels), false}));
+    renderer->render(left.data(), right.data(), 512);
+}
+
+TEST_CASE("Preview release leaves a playing note of the same pitch intact", "[preview]")
+{
+    auto synth = std::make_unique<Synth>();
+    synth->prepare(48000);
+    PlaybackSnapshot state;
+    state.channelCount = 1;
+    synth->noteOn(0, 60, 0.7f, InstrumentType::Synth);
+    synth->noteOn(0, 60, 0.7f, InstrumentType::Synth, true);
+    float left = 0, right = 0;
+    for (int i = 0; i < 512; ++i)
+        synth->renderSample(state, left, right);
+    REQUIRE(synth->activeVoices() == 2);
+    synth->noteOff(0, 60, true);
+    for (int i = 0; i < 24000; ++i)
+        synth->renderSample(state, left, right);
+    REQUIRE(synth->activeVoices() == 1);
+    synth->noteOff(0, 60);
+    for (int i = 0; i < 24000; ++i)
+        synth->renderSample(state, left, right);
+    REQUIRE(synth->activeVoices() == 0);
+}
+
+TEST_CASE("Factory restoration can retain beat position and explicit rewind wins", "[engine]")
+{
+    auto renderer = std::make_unique<RenderEngine>();
+    renderer->prepare(48000);
+    PlaybackSnapshot snapshot;
+    snapshot.channelCount = 1;
+    REQUIRE(renderer->publish(snapshot));
+    renderer->seekBeat(7);
+    renderer->prepare(44100);
+    std::array<float, 64> left{}, right{};
+    renderer->render(left.data(), right.data(), 64);
+    REQUIRE(renderer->positionBeat() == Catch::Approx(7));
+    renderer->seekBeat(9);
+    renderer->rewind();
+    renderer->render(left.data(), right.data(), 64);
+    REQUIRE(renderer->positionBeat() == 0);
 }

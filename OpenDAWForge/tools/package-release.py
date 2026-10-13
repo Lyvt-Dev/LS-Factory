@@ -40,6 +40,7 @@ with tempfile.TemporaryDirectory() as temporary:
     for path in [project / 'README.md', project / 'LICENSE']:
         shutil.copy2(path, stage / path.name)
     shutil.copytree(project / 'docs', stage / 'docs')
+    shutil.copy2(project / 'resources/factory/LICENSE.txt', stage / 'FACTORY-CONTENT-LICENSE.txt')
     shutil.copytree(repository / 'screenshots', stage / 'screenshots')
     juce_candidates = [build / '_deps/juce-src', project / 'libs/JUCE', Path('/workspace/.tools/JUCE')]
     for juce in juce_candidates:

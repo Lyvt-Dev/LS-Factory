@@ -1,5 +1,8 @@
 #include "MainWindow.h"
 #include "Tutorial.h"
+#include "Updater.h"
+#include "library/LibraryPanel.h"
+#include "library/LoopStarter.h"
 #include "persistence/BinaryFormat.h"
 #include "persistence/JsonExporter.h"
 #include <algorithm>
@@ -40,12 +43,16 @@ Workspace::Workspace(bool device)
     initial.id = PatternID{1};
     project_.patterns.push_back(initial);
     selected_ = initial.id;
-    for (auto *button :
-         {&play_,       &stop_,       &song_,       &loop_,        &save_,          &open_,
-          &export_,     &settings_,   &playlist_,   &piano_,       &mixer_,         &rackButton_,
-          &undoButton_, &redoButton_, &midiRecord_, &audioRecord_, &pluginsButton_, &newProject_,
-          &addTrack_,   &help_,       &layout_,     &fullscreen_})
+    for (auto *button : {&play_,        &stop_,          &song_,       &loop_,       &save_,
+                         &open_,        &export_,        &settings_,   &playlist_,   &piano_,
+                         &mixer_,       &rackButton_,    &undoButton_, &redoButton_, &midiRecord_,
+                         &audioRecord_, &pluginsButton_, &newProject_, &addTrack_,   &help_,
+                         &layout_,      &fullscreen_,    &updates_,    &factory_,    &ideas_})
         addAndMakeVisible(button);
+    addAndMakeVisible(factory_);
+    addAndMakeVisible(ideas_);
+    factory_.onClick = [this] { showLibrary(); };
+    ideas_.onClick = [this] { showLoopStarter(); };
     newProject_.onClick = [this] { projectMenu(); };
     addTrack_.onClick = [this]
     {
@@ -63,6 +70,7 @@ Workspace::Workspace(bool device)
                                    self->addTrack(static_cast<InstrumentType>(choice - 1));
                            });
     };
+    updates_.onClick = [this] { showUpdates(); };
     help_.onClick = [this] { showTutorial(); };
     layout_.onClick = [this] { resetLayout(); };
     fullscreen_.onClick = [this]
@@ -146,6 +154,7 @@ Workspace::Workspace(bool device)
     addAndMakeVisible(patterns_);
     channels_.onChange = [this]
     {
+        stopPreview();
         selectedChannel_ = std::max(0, channels_.getSelectedItemIndex());
         audio_.renderer.setMidiChannel(selectedChannel_);
         repaint();
@@ -172,6 +181,8 @@ Workspace::Workspace(bool device)
         audio_.renderer.prepare(48000);
     sync(true);
     startTimerHz(30);
+    if (device)
+        showUpdates(false);
 }
 void Workspace::addTrack(InstrumentType type)
 {
@@ -213,6 +224,7 @@ void Workspace::addTrack(InstrumentType type)
 }
 void Workspace::replaceProject(bool demo)
 {
+    stopPreview();
     if (pluginsLoading_)
     {
         message_ = "Wait for plugin loading to finish";
@@ -306,10 +318,405 @@ void Workspace::showTutorial()
     };
     tutorialWindow_ = std::make_unique<GuideWindow>();
 }
+bool Workspace::readyForUpdate() const
+{
+    return !(libraryWindow_ && libraryWindow_->isVisible()) && !(ideaWindow_ && ideaWindow_->isVisible()) &&
+           !(pluginWindow_ && pluginWindow_->isVisible()) &&
+           juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0 && !dirty_ &&
+           !audio_.auditionActive() && !pluginEdited_.load() && !midiRecord_.getToggleState() &&
+           !audio_.renderer.playing() && !audio_.recordingAudio() && !pluginsLoading_ &&
+           workers_.getNumJobs() == 0 && previewPitch_ < 0;
+}
+void Workspace::showUpdates(bool visible)
+{
+    if (!updateWindow_)
+    {
+        class SettingsWindow final : public juce::DocumentWindow
+        {
+          public:
+            SettingsWindow() : DocumentWindow("LS Factory / Settings", panel, DocumentWindow::allButtons)
+            {
+                setUsingNativeTitleBar(false);
+                setResizable(true, false);
+                setResizeLimits(600, 370, 1100, 700);
+            }
+            void closeButtonPressed() override
+            {
+                setVisible(false);
+            }
+        };
+        const juce::Component::SafePointer<Workspace> self(this);
+        updateWindow_ = std::make_unique<SettingsWindow>();
+        updateWindow_->setContentOwned(new UpdatePanel([self] { return self && self->readyForUpdate(); }),
+                                       true);
+        updateWindow_->centreWithSize(680, 400);
+    }
+    updateWindow_->setVisible(visible);
+    if (visible)
+        updateWindow_->toFront(true);
+}
+namespace
+{
+class FactoryWindow final : public juce::DocumentWindow
+{
+  public:
+    explicit FactoryWindow(const juce::String &name) : DocumentWindow(name, panel, DocumentWindow::allButtons)
+    {
+        setUsingNativeTitleBar(false);
+        setResizable(true, false);
+    }
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+    }
+};
+} // namespace
+void Workspace::showLibrary()
+{
+    if (!libraryWindow_)
+    {
+        const juce::Component::SafePointer<Workspace> self(this);
+        libraryWindow_ = std::make_unique<FactoryWindow>("LS Factory / Factory Library");
+        libraryWindow_->setContentOwned(new library::LibraryPanel(
+                                            [self](library::Entry entry)
+                                            {
+                                                if (self)
+                                                    self->auditionEntry(entry);
+                                            },
+                                            [self]
+                                            {
+                                                if (self)
+                                                    self->audio_.stopAudition();
+                                            },
+                                            [self](library::Entry entry, int destination)
+                                            {
+                                                if (self)
+                                                    self->loadLibraryEntry(entry, destination);
+                                            },
+                                            libraryRoot_),
+                                        true);
+        libraryWindow_->setResizeLimits(940, 680, 1800, 1200);
+        libraryWindow_->centreWithSize(1040, 720);
+    }
+    libraryWindow_->setVisible(true);
+    libraryWindow_->toFront(true);
+}
+void Workspace::showLoopStarter()
+{
+    if (!ideaWindow_)
+    {
+        const juce::Component::SafePointer<Workspace> self(this);
+        ideaWindow_ = std::make_unique<FactoryWindow>("LS Factory / Loop Starter");
+        ideaWindow_->setContentOwned(new library::LoopStarter(
+                                         [self](library::Idea idea)
+                                         {
+                                             if (self)
+                                                 self->auditionIdea(idea);
+                                         },
+                                         [self](library::Entry entry)
+                                         {
+                                             if (self)
+                                                 self->auditionEntry(entry);
+                                         },
+                                         [self]
+                                         {
+                                             if (self)
+                                                 self->audio_.stopAudition();
+                                         },
+                                         [self](library::Idea idea, bool arrangement, bool tempo)
+                                         {
+                                             if (self)
+                                                 self->loadIdea(idea, arrangement, tempo);
+                                         },
+                                         libraryRoot_),
+                                     true);
+        ideaWindow_->setResizeLimits(740, 580, 1500, 1000);
+        ideaWindow_->centreWithSize(800, 620);
+    }
+    ideaWindow_->setVisible(true);
+    ideaWindow_->toFront(true);
+}
+void Workspace::auditionEntry(library::Entry entry)
+{
+    const juce::Component::SafePointer<Workspace> self(this);
+    const auto root = libraryRoot_;
+    workers_.addJob(
+        [self, entry, root]
+        {
+            juce::File file;
+            auto r = library::Library::materialize(entry, file, root);
+            SampleData sample;
+            if (r.wasOk() && file.existsAsFile())
+            {
+                const auto decoded = AudioEngine::decodeAudio(file, sample);
+                if (!decoded)
+                    r = juce::Result::fail(decoded.error);
+            }
+            if (self && r.wasOk())
+            {
+                const double seconds =
+                    sample.mono.empty() ? 1.5 : std::min(10.0, sample.mono.size() / sample.sampleRate);
+                const auto played = self->audio_.audition(entry.preset, std::move(sample), seconds);
+                if (!played)
+                    r = juce::Result::fail(played.error);
+            }
+            juce::MessageManager::callAsync(
+                [self, r, entry]
+                {
+                    if (self)
+                        self->message_ = r.wasOk() ? "Preview: " + entry.name : r.getErrorMessage();
+                });
+        });
+}
+void Workspace::auditionIdea(library::Idea idea)
+{
+    const juce::Component::SafePointer<Workspace> self(this);
+    const auto root = libraryRoot_;
+    workers_.addJob(
+        [self, idea, root]
+        {
+            Project preview;
+            auto r = library::Library::applyIdea(preview, idea, false, true, root);
+            if (self && r.wasOk())
+            {
+                const auto played = self->audio_.auditionProject(preview, preview.patterns.back().id,
+                                                                 8 * 60 / idea.bpm + .25);
+                if (!played)
+                    r = juce::Result::fail(played.error);
+            }
+            juce::MessageManager::callAsync(
+                [self, r]
+                {
+                    if (self)
+                        self->message_ =
+                            r.wasOk() ? "Loop idea preview (project unchanged)" : r.getErrorMessage();
+                });
+        });
+}
+void Workspace::loadLibraryEntry(library::Entry entry, int destination, int targetTrack, double beat)
+{
+    if (midiRecord_.getToggleState() || audio_.recordingAudio())
+    {
+        message_ = "Stop recording before loading factory content";
+        return;
+    }
+    if (pluginsLoading_)
+    {
+        message_ = "Wait for loading to finish";
+        return;
+    }
+    const auto channelId = selectedChannel_ < static_cast<int>(project_.channels.size())
+                               ? project_.channels[static_cast<size_t>(selectedChannel_)].id
+                               : ChannelID{};
+    const auto patternId = selected_;
+    const auto trackId = targetTrack >= 0 && targetTrack < static_cast<int>(project_.tracks.size())
+                             ? project_.tracks[static_cast<size_t>(targetTrack)].id
+                             : TrackID{};
+    const juce::Component::SafePointer<Workspace> self(this);
+    const auto root = libraryRoot_;
+    workers_.addJob(
+        [self, entry, destination, beat, channelId, patternId, trackId, root]
+        {
+            juce::File file;
+            auto r = library::Library::materialize(entry, file, root);
+            SampleData decoded;
+            if (r.wasOk() && file.existsAsFile())
+            {
+                const auto result = AudioEngine::decodeAudio(file, decoded);
+                if (!result)
+                    r = juce::Result::fail(result.error);
+            }
+            juce::MessageManager::callAsync(
+                [self, entry, destination, beat, channelId, patternId, trackId, file, r]
+                {
+                    if (!self)
+                        return;
+                    if (r.failed())
+                    {
+                        self->message_ = r.getErrorMessage();
+                        return;
+                    }
+                    Project candidate = self->project_;
+                    auto channel = entry.preset;
+                    if (file.existsAsFile())
+                        channel.samplePath = file.getFullPathName().toStdString();
+                    int index = 0;
+                    bool replaced = false;
+                    if (destination == 2)
+                    {
+                        auto *existing = candidate.findChannel(channelId);
+                        if (!existing)
+                        {
+                            self->message_ = "Select a channel before replacing its sound";
+                            return;
+                        }
+                        channel.id = existing->id;
+                        channel.muted = existing->muted;
+                        channel.soloed = existing->soloed;
+                        *existing = channel;
+                        index = static_cast<int>(existing - candidate.channels.data());
+                        replaced = true;
+                    }
+                    else
+                    {
+                        if (candidate.channels.size() >= maxChannels)
+                        {
+                            self->message_ = "Channel capacity reached";
+                            return;
+                        }
+                        channel.id = ChannelID{candidate.nextId()};
+                        index = static_cast<int>(candidate.channels.size());
+                        candidate.channels.push_back(channel);
+                    }
+                    if (destination == 3)
+                    {
+                        auto *pattern = candidate.findPattern(patternId);
+                        if (!pattern)
+                        {
+                            self->message_ = "Select a pattern first";
+                            return;
+                        }
+                        if (entry.kind == "loop")
+                            pattern->lengthBeats = std::max(pattern->lengthBeats, entry.beats);
+                        pattern->notes.push_back(
+                            {index, 60, 0, entry.kind == "loop" ? entry.beats : .25, .8f});
+                    }
+                    else if (!replaced)
+                    {
+                        const bool clip = entry.kind == "loop" || trackId.value() != 0;
+                        Pattern pattern;
+                        if (clip)
+                        {
+                            pattern.id = PatternID{candidate.nextId()};
+                            pattern.name = entry.name.toStdString();
+                            pattern.lengthBeats = entry.kind == "loop" ? entry.beats : 4;
+                            pattern.notes.push_back(
+                                {index, 60, 0, entry.kind == "loop" ? entry.beats : .25, .8f});
+                            candidate.patterns.push_back(pattern);
+                        }
+                        auto track = std::find_if(candidate.tracks.begin(), candidate.tracks.end(),
+                                                  [&](const auto &t) { return t.id == trackId; });
+                        if (track == candidate.tracks.end())
+                        {
+                            if (candidate.tracks.size() >= 128)
+                            {
+                                self->message_ = "Track capacity reached";
+                                return;
+                            }
+                            Track newTrack;
+                            newTrack.id = TrackID{candidate.nextId()};
+                            newTrack.name = entry.name.toStdString();
+                            newTrack.color = channel.color;
+                            candidate.tracks.push_back(newTrack);
+                            track = std::prev(candidate.tracks.end());
+                        }
+                        if (clip)
+                            track->clips.push_back({ClipID{candidate.nextId()}, pattern.id,
+                                                    std::max(0.0, beat), pattern.lengthBeats, 0, false});
+                    }
+                    PlaybackSnapshot state;
+                    const auto checked = compilePlayback(candidate, patternId, self->songMode_, state);
+                    if (!checked)
+                    {
+                        self->message_ = checked.error;
+                        return;
+                    }
+                    self->edit("Load factory sound", [candidate](Project &p) { p = candidate; });
+                    self->selectedChannel_ = index;
+                    self->sync(true);
+                    self->restoreSamplesAsync(true);
+                    self->message_ = "Loaded " + entry.name +
+                                     (entry.kind == "loop" ? " / source BPM " + juce::String(entry.bpm, 0) +
+                                                                 " (project tempo preserved)"
+                                                           : "");
+                });
+        });
+}
+void Workspace::loadIdea(library::Idea idea, bool arrangement, bool tempo)
+{
+    if (midiRecord_.getToggleState() || audio_.recordingAudio())
+    {
+        message_ = "Stop recording before loading factory content";
+        return;
+    }
+    if (pluginsLoading_)
+    {
+        message_ = "Wait for loading to finish";
+        return;
+    }
+    const auto before = project_;
+    const auto root = libraryRoot_;
+    const juce::Component::SafePointer<Workspace> self(this);
+    workers_.addJob(
+        [self, before, idea, arrangement, tempo, root]
+        {
+            auto candidate = before;
+            const auto result = library::Library::applyIdea(candidate, idea, arrangement, tempo, root);
+            juce::MessageManager::callAsync(
+                [self, before, candidate, result]
+                {
+                    if (!self)
+                        return;
+                    if (result.failed())
+                    {
+                        self->message_ = result.getErrorMessage();
+                        return;
+                    }
+                    if (self->project_ != before)
+                    {
+                        self->message_ = "Project changed while preparing the idea. Please add it again.";
+                        return;
+                    }
+                    self->edit("Add factory idea", [candidate](Project &p) { p = candidate; });
+                    self->selected_ = candidate.patterns.back().id;
+                    self->sync(true);
+                    self->restoreSamplesAsync(true);
+                    self->message_ = "Factory idea added; previous tracks and sounds preserved";
+                });
+        });
+}
+bool Workspace::isInterestedInDragSource(const juce::DragAndDropTarget::SourceDetails &details)
+{
+    return details.description.toString().startsWith("lsfactory-sound:");
+}
+void Workspace::itemDropped(const juce::DragAndDropTarget::SourceDetails &details)
+{
+    if (!isInterestedInDragSource(details))
+        return;
+    auto *source = details.sourceComponent.get();
+    auto *panel = source ? source->findParentComponentOfClass<library::LibraryPanel>() : nullptr;
+    if (!panel)
+        return;
+    auto entry = panel->lookup(details.description.toString().substring(16));
+    if (!entry)
+        return;
+    const auto pos = details.localPosition;
+    if (showRack_ && rackBounds_.contains(pos) && pos.y >= rackBounds_.getY() + 43)
+    {
+        const int channel = rackOffset_ + (pos.y - rackBounds_.getY() - 43) / 31;
+        if (channel < static_cast<int>(project_.channels.size()))
+        {
+            selectedChannel_ = channel;
+            loadLibraryEntry(*entry, 2);
+            return;
+        }
+    }
+    if (view_ == View::Playlist && timeline().contains(pos))
+    {
+        loadLibraryEntry(*entry, 1, (pos.y - timeline().getY()) / 48,
+                         std::floor((pos.x - timeline().getX()) / beatWidth_ * 4) / 4);
+        return;
+    }
+    loadLibraryEntry(*entry, 1);
+}
 Workspace::~Workspace()
 {
     stopTimer();
+    stopPreview();
     tutorialWindow_.reset();
+    libraryWindow_.reset();
+    ideaWindow_.reset();
+    updateWindow_.reset();
     closePluginEditor();
     workers_.removeAllJobs(true, -1);
     setLookAndFeel(nullptr);
@@ -409,8 +816,47 @@ void Workspace::selectView(View v)
     resized();
     repaint();
 }
+void Workspace::previewNote(int pitch, float velocity)
+{
+    if (pitch < 0 || pitch > 127 || selectedChannel_ < 0 ||
+        selectedChannel_ >= static_cast<int>(project_.channels.size()) || pluginsLoading_)
+        return;
+    if (!stopPreview())
+        return;
+    if (audio_.renderer.midi({pitch, velocity, true, selectedChannel_, false}))
+    {
+        previewPitch_ = pitch;
+        previewChannel_ = selectedChannel_;
+        previewUntil_ = juce::Time::getMillisecondCounterHiRes() + 300.0;
+        repaint();
+    }
+}
+bool Workspace::stopPreview()
+{
+    if (previewPitch_ < 0)
+        return true;
+    if (!audio_.renderer.midi({previewPitch_, 0, false, previewChannel_, false}))
+        return false;
+    previewPitch_ = -1;
+    repaint();
+    return true;
+}
 void Workspace::timerCallback()
 {
+    if (updateWindow_)
+    {
+        auto *settings = static_cast<UpdatePanel *>(updateWindow_->getContentComponent());
+        const auto v = settings->availableVersion();
+        const juce::String label = v.isEmpty() ? "SETTINGS" : "UPDATE";
+        if (updates_.getButtonText() != label)
+        {
+            updates_.setButtonText(label);
+            updates_.setTooltip(v.isEmpty() ? "Update settings" : "Version " + v + " is available");
+        }
+    }
+
+    if (previewPitch_ >= 0 && juce::Time::getMillisecondCounterHiRes() >= previewUntil_)
+        stopPreview();
     if (pluginEdited_.exchange(false))
         dirty_ = true;
     if (pendingAudio_)
@@ -486,6 +932,9 @@ void Workspace::resized()
     place(layout_, 76);
     place(help_, 84);
     place(fullscreen_, 92);
+    place(updates_, 90);
+    place(factory_, 80);
+    place(ideas_, 114);
     browserBounds_ = {8, 134, 220, getHeight() - 174};
     search_.setBounds(18, 172, 200, 28);
     auto &bounds = viewBounds_[static_cast<size_t>(view_)];
@@ -704,7 +1153,10 @@ void Workspace::drawPiano(juce::Graphics &g)
         const int y = area.getY() + i * row;
         const int key = pitch % 12;
         const bool black = key == 1 || key == 3 || key == 6 || key == 8 || key == 10;
-        box(g, {editorBounds_.getX() + 1, y, 62, row}, black ? background : juce::Colour(0xffb7c0bf));
+        box(g, {editorBounds_.getX() + 1, y, 62, row},
+            pitch == previewPitch_ ? accent
+            : black                ? background
+                                   : juce::Colour(0xffb7c0bf));
         text(g, pitchName(pitch), {editorBounds_.getX() + 8, y, 49, row}, 9, black ? muted : background,
              juce::Justification::centredRight);
         g.setColour(black ? grid.darker(0.09f) : grid.brighter(0.03f));
@@ -1007,6 +1459,13 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
         return;
     }
     const auto area = timeline();
+    if (view_ == View::Piano && pos.x >= editorBounds_.getX() && pos.x < area.getX() &&
+        pos.y >= area.getY() && pos.y < area.getBottom())
+    {
+        if (!e.mods.isRightButtonDown())
+            previewNote(pianoTop_ - (pos.y - area.getY()) / 18);
+        return;
+    }
     if (view_ == View::Piano && pos.y >= area.getBottom() && pos.y < area.getBottom() + 72 &&
         pos.x >= area.getX())
     {
@@ -1069,6 +1528,7 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
                 }
                 else
                 {
+                    previewNote(n.pitch, n.velocity);
                     draggedNote_ = i;
                     beforeDrag_ = project_;
                     preview_ = project_;
@@ -1087,6 +1547,11 @@ void Workspace::mouseDown(const juce::MouseEvent &e)
             const int ch = selectedChannel_;
             edit("Add note",
                  [=](Project &p) { p.findPattern(id)->notes.push_back({ch, pitch, beat, 0.5, 0.8f}); });
+            if (activePattern() &&
+                std::any_of(activePattern()->notes.begin(), activePattern()->notes.end(),
+                            [=](const auto &note)
+                            { return note.channel == ch && note.pitch == pitch && note.startBeat == beat; }))
+                previewNote(pitch);
         }
         return;
     }
@@ -1249,7 +1714,10 @@ void Workspace::mouseDrag(const juce::MouseEvent &e)
         else
         {
             n.startBeat = std::clamp(dragBeat_ + delta, 0.0, p->lengthBeats - 0.25);
-            n.pitch = std::clamp(dragPitch_ - e.getDistanceFromDragStartY() / 18, 0, 127);
+            const int nextPitch = std::clamp(dragPitch_ - e.getDistanceFromDragStartY() / 18, 0, 127);
+            if (nextPitch != n.pitch)
+                previewNote(nextPitch, n.velocity);
+            n.pitch = nextPitch;
         }
         repaint();
         return;
@@ -1448,21 +1916,25 @@ bool Workspace::keyPressed(const juce::KeyPress &key)
     }
     return false;
 }
-void Workspace::restoreSamplesAsync()
+void Workspace::restoreSamplesAsync(bool preservePosition)
 {
-    closePluginEditor();
+    if (!preservePosition)
+        closePluginEditor();
     pluginsLoading_ = true;
     pluginsButton_.setEnabled(false);
     const auto project = project_;
+    const auto beat = audio_.renderer.positionBeat();
     const juce::Component::SafePointer<Workspace> self(this);
     workers_.addJob(
-        [self, project]
+        [self, project, preservePosition, beat]
         {
             if (!self)
                 return;
             auto r = self->audio_.restoreSamples(project);
-            if (r)
+            if (r && !preservePosition)
                 r = self->audio_.restorePlugins(project.masterInserts);
+            if (r && preservePosition)
+                self->audio_.renderer.seekBeat(beat);
             juce::MessageManager::callAsync(
                 [self]
                 {
@@ -2037,6 +2509,143 @@ bool Workspace::smokeTest(const juce::File &directory)
     mouseUp(mouse(step, step, false));
     if (activePattern()->notes.size() != 1 || !undo_.undo(project_) || !activePattern()->notes.empty())
         return false;
+    addTrack(InstrumentType::Synth);
+    selectView(View::Piano);
+    const auto auditionProject = project_;
+    const auto pianoArea = timeline();
+    const auto key = juce::Point<int>(editorBounds_.getX() + 20, pianoArea.getY() + 12 * 18 + 9);
+    audio_.renderer.setRecording(true);
+    mouseDown(mouse(key, key, false));
+    std::array<float, 512> auditionLeft{}, auditionRight{};
+    audio_.renderer.render(auditionLeft.data(), auditionRight.data(), 512);
+    double auditionEnergy = 0;
+    for (float value : auditionLeft)
+        auditionEnergy += value * value;
+    CapturedMidi auditionCapture;
+    if (auditionEnergy < 0.001 || previewPitch_ != pianoTop_ - 12 || audio_.renderer.playing() ||
+        audio_.renderer.capture(auditionCapture) || project_ != auditionProject)
+        return false;
+    previewUntil_ = 0;
+    timerCallback();
+    for (int block = 0; block < 100; ++block)
+        audio_.renderer.render(auditionLeft.data(), auditionRight.data(), 512);
+    if (previewPitch_ != -1)
+        return false;
+    for (float value : auditionLeft)
+        if (std::abs(value) > 0.000001f)
+            return false;
+    const auto notePosition = juce::Point<int>(pianoArea.getX() + static_cast<int>(beatWidth_ * 2), key.y);
+    mouseDown(mouse(notePosition, notePosition, false));
+    mouseUp(mouse(notePosition, notePosition, false));
+    audio_.renderer.render(auditionLeft.data(), auditionRight.data(), 512);
+    auditionEnergy = 0;
+    for (float value : auditionLeft)
+        auditionEnergy += value * value;
+    if (auditionEnergy < 0.001 || activePattern()->notes.size() != 1 ||
+        audio_.renderer.capture(auditionCapture))
+        return false;
+    stopPreview();
+    audio_.renderer.setRecording(false);
+    UpdatePanel updateSettings([] { return false; }, false,
+                               directory.getChildFile("update-settings-test.json"));
+    if (!updateSettings.preferencesSmokeTest() || !capture(updateSettings, "update-settings.png") ||
+        readyForUpdate())
+        return false;
+    libraryRoot_ = directory.getChildFile("factory-ui-state");
+    library::Library library(libraryRoot_);
+    const auto projectBeforeLibrary = project_;
+    const auto sound = library.entries().front();
+    juce::File sampleFile;
+    if (library::Library::materialize(sound, sampleFile, libraryRoot_).failed())
+        return false;
+    SampleData sample;
+    if (!AudioEngine::decodeAudio(sampleFile, sample) ||
+        !audio_.audition(sound.preset, std::move(sample), .5))
+        return false;
+    float *auditionOutput[] = {auditionLeft.data(), auditionRight.data()};
+    audio_.audioDeviceIOCallbackWithContext(nullptr, 0, auditionOutput, 2, 512,
+                                            juce::AudioIODeviceCallbackContext{});
+    auditionEnergy = 0;
+    for (float value : auditionLeft)
+        auditionEnergy += value * value;
+    if (auditionEnergy < .001 || project_ != projectBeforeLibrary || audio_.renderer.positionBeat() != 0)
+        return false;
+    audio_.stopAudition();
+    audio_.audioDeviceIOCallbackWithContext(nullptr, 0, auditionOutput, 2, 512,
+                                            juce::AudioIODeviceCallbackContext{});
+    if (audio_.auditionActive())
+        return false;
+    showLibrary();
+    if (!capture(*libraryWindow_->getContentComponent(), "factory-library.png"))
+        return false;
+    libraryWindow_->setVisible(false);
+    showLoopStarter();
+    if (!capture(*ideaWindow_->getContentComponent(), "loop-starter.png"))
+        return false;
+    ideaWindow_->setVisible(false);
+#if JUCE_MODAL_LOOPS_PERMITTED
+    auto waitForLoad = [this]()
+    {
+        const auto deadline = juce::Time::getMillisecondCounterHiRes() + 5000;
+        do
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        } while ((workers_.getNumJobs() > 0 || pluginsLoading_) &&
+                 juce::Time::getMillisecondCounterHiRes() < deadline);
+        return workers_.getNumJobs() == 0 && !pluginsLoading_;
+    };
+    auto *factoryPanel = static_cast<library::LibraryPanel *>(libraryWindow_->getContentComponent());
+    juce::ListBox *sourceList = nullptr;
+    for (int i = 0; i < factoryPanel->getNumChildComponents(); ++i)
+        if (auto *list = dynamic_cast<juce::ListBox *>(factoryPanel->getChildComponent(i)))
+            sourceList = list;
+    if (!sourceList)
+        return false;
+    juce::SparseSet<int> selection;
+    selection.addRange({0, 1});
+    const auto description = factoryPanel->getDragSourceDescription(selection);
+    const auto beforeDrop = project_;
+    juce::DragAndDropTarget::SourceDetails drop(description, sourceList,
+                                                timeline().getTopLeft() + juce::Point<int>(8, 8));
+    if (!isInterestedInDragSource(drop))
+        return false;
+    itemDropped(drop);
+    if (!waitForLoad() || project_.channels.size() != beforeDrop.channels.size() + 1 ||
+        project_.tracks.front().clips.size() != beforeDrop.tracks.front().clips.size() + 1 ||
+        project_.channels.back().instrument != InstrumentType::Sampler)
+        return false;
+    if (!undo_.undo(project_) || project_ != beforeDrop)
+        return false;
+    sync(true);
+    restoreSamplesAsync();
+    if (!waitForLoad())
+        return false;
+    auto idea = library.generate("House", 120, 60, true, "Energetic", 31);
+    loadIdea(idea, true, false);
+    if (!waitForLoad() || project_.channels.size() != beforeDrop.channels.size() + 5 ||
+        project_.tempoMap != beforeDrop.tempoMap)
+        return false;
+    if (!undo_.undo(project_) || project_ != beforeDrop)
+        return false;
+    sync(true);
+    restoreSamplesAsync();
+    if (!waitForLoad())
+        return false;
+#endif
+    const auto factoryIdea = library.generate("House", 120, 60, true, "Dreamy", 7);
+    Project ideaPreview;
+    if (library::Library::applyIdea(ideaPreview, factoryIdea, false, true, libraryRoot_).failed() ||
+        !audio_.auditionProject(ideaPreview, ideaPreview.patterns.back().id, 1.0))
+        return false;
+    audio_.audioDeviceIOCallbackWithContext(nullptr, 0, auditionOutput, 2, 512,
+                                            juce::AudioIODeviceCallbackContext{});
+    auditionEnergy = 0;
+    for (float value : auditionLeft)
+        auditionEnergy += value * value;
+    if (auditionEnergy < .001 || project_ != projectBeforeLibrary)
+        return false;
+    audio_.stopAudition();
+    selectView(View::Playlist);
     project_ = makeDemoProject();
     selected_ = project_.patterns.front().id;
     undo_.clear();

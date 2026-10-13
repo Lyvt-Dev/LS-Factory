@@ -12,6 +12,7 @@ struct LiveMidi
     float velocity = 0;
     bool on = false;
     int channel = 0;
+    bool recordable = true;
 };
 class RenderEngine
 {
@@ -36,6 +37,11 @@ class RenderEngine
     bool playing() const noexcept
     {
         return requestedPlaying_.load();
+    }
+    void seekBeat(double beat) noexcept
+    {
+        if (beat >= 0 && beat <= 1000000)
+            seek_.store(beat);
     }
     void rewind() noexcept
     {
@@ -95,6 +101,7 @@ class RenderEngine
     SpscQueue<LiveMidi, 256> midi_;
     PlaybackSnapshot state_{};
     Synth synth_;
+    std::atomic<double> seek_{-1};
     double rate_ = 48000;
     std::int64_t sample_ = 0;
     bool wasPlaying_ = false;

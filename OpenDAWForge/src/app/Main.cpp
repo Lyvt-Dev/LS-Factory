@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Updater.h"
 #include "persistence/JsonExporter.h"
 #include <iostream>
 namespace forge
@@ -12,7 +13,7 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
     }
     const juce::String getApplicationVersion() override
     {
-        return "0.3.0";
+        return "0.4.0";
     }
     bool moreThanOneInstanceAllowed() override
     {
@@ -42,6 +43,20 @@ class FactoryApplication final : public juce::JUCEApplication, private juce::Tim
                                  : "VST3 smoke failed")
                       << std::endl;
             setApplicationReturnValue(result ? 0 : 1);
+            quit();
+            return;
+        }
+        if (args.size() >= 2 && args[0] == "--factory-smoke-test")
+        {
+            const bool ok = library::Library::smokeTest(juce::File(args[1]));
+            setApplicationReturnValue(ok ? 0 : 1);
+            quit();
+            return;
+        }
+        if (args.size() >= 2 && args[0] == "--update-smoke-test")
+        {
+            const bool ok = UpdateService::smokeTest(juce::File(args[1]));
+            setApplicationReturnValue(ok ? 0 : 1);
             quit();
             return;
         }

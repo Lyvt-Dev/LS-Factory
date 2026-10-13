@@ -16,6 +16,11 @@ AudioEngine::~AudioEngine()
         input_->stop();
     devices.removeAudioCallback(this);
     devices.closeAudioDevice();
+    delete pendingAudition_.exchange(nullptr);
+    delete activeAudition_;
+    Audition *retired = nullptr;
+    while (retiredAuditions_.pop(retired))
+        delete retired;
 }
 juce::String AudioEngine::initialise()
 {
@@ -39,6 +44,8 @@ juce::String AudioEngine::initialise()
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice *device)
 {
     deviceRate_ = device->getCurrentSampleRate();
+    auditionRate_.store(deviceRate_);
+    stopAudition();
     renderer.prepare(deviceRate_);
     plugins.prepare(deviceRate_, PluginManager::maximumBlock);
 }
@@ -67,14 +74,134 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float *const *input, in
     if (channels >= 2 && output[0] && output[1])
     {
         plugins.process(output[0], output[1], samples, firstBeat, pluginTempo.load(), renderer.playing());
+        mixAudition(output[0], output[1], samples);
         const auto leftRange = juce::FloatVectorOperations::findMinAndMax(output[0], samples),
                    rightRange = juce::FloatVectorOperations::findMinAndMax(output[1], samples);
         outputPeakLeft.store(std::max(std::abs(leftRange.getStart()), std::abs(leftRange.getEnd())));
         outputPeakRight.store(std::max(std::abs(rightRange.getStart()), std::abs(rightRange.getEnd())));
     }
+    else
+        mixAudition(channels > 0 ? output[0] : nullptr, nullptr, samples);
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     const double rate = deviceRate_;
     cpuPercent.store(static_cast<float>(elapsed * rate / std::max(1, samples) * 100));
+}
+Result AudioEngine::decodeAudio(const juce::File &file, SampleData &data)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+    if (!reader || reader->sampleRate <= 0 || reader->lengthInSamples < 2 ||
+        reader->lengthInSamples > reader->sampleRate * 60)
+        return Result::failure("Unsupported or oversized audio sample");
+    const int count = static_cast<int>(reader->lengthInSamples);
+    juce::AudioBuffer<float> buffer(2, count);
+    if (!reader->read(&buffer, 0, count, 0, true, true))
+        return Result::failure("Sample decoding failed");
+    data.sampleRate = reader->sampleRate;
+    data.mono.resize(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i)
+        data.mono[static_cast<size_t>(i)] =
+            (buffer.getSample(0, i) + buffer.getSample(reader->numChannels > 1 ? 1 : 0, i)) * .5f;
+    return {};
+}
+Result AudioEngine::audition(Channel channel, SampleData sample, double seconds)
+{
+    Audition *retired = nullptr;
+    while (retiredAuditions_.pop(retired))
+        delete retired;
+    channel.id = ChannelID{1};
+    Project project;
+    project.channels.push_back(channel);
+    if (auto r = project.validate(); !r)
+        return r;
+    auto preview = std::make_unique<Audition>();
+    const double rate = auditionRate_.load();
+    preview->engine.prepare(rate);
+    PlaybackSnapshot state;
+    if (auto r = compilePlayback(project, PatternID{}, true, state); !r)
+        return r;
+    preview->engine.publish(state);
+    if (channel.instrument == InstrumentType::Sampler)
+    {
+        if (sample.mono.empty())
+            return Result::failure("Sample preview is empty");
+        preview->engine.setSample(0, std::move(sample));
+    }
+    preview->engine.midi({60, .8f, true, 0, false});
+    preview->remaining = static_cast<std::int64_t>(juce::jlimit(.1, 10.0, seconds) * rate);
+    stopAudition_.store(false);
+    delete pendingAudition_.exchange(preview.release());
+    auditionActive_.store(true);
+    return {};
+}
+Result AudioEngine::auditionProject(const Project &project, PatternID pattern, double seconds)
+{
+    Audition *retired = nullptr;
+    while (retiredAuditions_.pop(retired))
+        delete retired;
+    auto preview = std::make_unique<Audition>();
+    const auto rate = auditionRate_.load();
+    preview->engine.prepare(rate);
+    PlaybackSnapshot state;
+    if (auto r = compilePlayback(project, pattern, false, state); !r)
+        return r;
+    state.loop = false;
+    preview->engine.publish(state);
+    for (size_t i = 0; i < project.channels.size(); ++i)
+        if (project.channels[i].instrument == InstrumentType::Sampler)
+        {
+            SampleData sample;
+            if (auto r = decodeAudio(juce::File(project.channels[i].samplePath), sample); !r)
+                return r;
+            preview->engine.setSample(i, std::move(sample));
+        }
+    preview->engine.setPlaying(true);
+    preview->remaining = static_cast<std::int64_t>(juce::jlimit(.1, 30.0, seconds) * rate);
+    stopAudition_.store(false);
+    delete pendingAudition_.exchange(preview.release());
+    auditionActive_.store(true);
+    return {};
+}
+void AudioEngine::mixAudition(float *left, float *right, int samples) noexcept
+{
+    if (auto *next = pendingAudition_.exchange(nullptr))
+    {
+        // One request producer drains retirement before every publish: at most two retired
+        // pointers can await it. The fixed ring therefore never fills under this contract.
+        if (activeAudition_)
+        {
+            const bool queued = retiredAuditions_.push(activeAudition_);
+            jassert(queued);
+            (void)queued;
+        }
+        activeAudition_ = next;
+    }
+    if (!activeAudition_)
+        return;
+    if (stopAudition_.load())
+        activeAudition_->remaining = 0;
+    for (int offset = 0; offset < samples && activeAudition_->remaining > 0;)
+    {
+        const int count = std::min(512, samples - offset);
+        activeAudition_->engine.render(auditionLeft_.data(), auditionRight_.data(), count);
+        for (int i = 0; i < count; ++i)
+        {
+            const float fade =
+                static_cast<float>(std::clamp<std::int64_t>(activeAudition_->remaining, 0, 256)) / 256;
+            if (left)
+                left[offset + i] =
+                    std::clamp(left[offset + i] + auditionLeft_[static_cast<size_t>(i)] * fade, -1.0f, 1.0f);
+            if (right)
+                right[offset + i] = std::clamp(
+                    right[offset + i] + auditionRight_[static_cast<size_t>(i)] * fade, -1.0f, 1.0f);
+            if (activeAudition_->remaining > 0)
+                --activeAudition_->remaining;
+        }
+        offset += count;
+    }
+    if (activeAudition_->remaining == 0)
+        auditionActive_.store(false);
 }
 Result AudioEngine::startRecording(const juce::File &file, bool offline)
 {

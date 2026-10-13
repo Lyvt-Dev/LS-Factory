@@ -14,7 +14,7 @@ SOURCES
     trap 'rm -rf "$forge_download"' EXIT
     (
         cd "$forge_download"
-        "${forge_apt[@]}" download clang-19 libllvm19 libclang-cpp19 libclang-common-19-dev libclang1-19 llvm-19-linker-tools cmake cmake-data ninja-build libjsoncpp26 librhash1 libuv1t64 libasound2-dev libasound2t64 libfreetype-dev libfreetype6 libfontconfig-dev libfontconfig1 libx11-dev libx11-6 libxext-dev libxext6 libxinerama-dev libxinerama1 libxrandr-dev libxrandr2 libxcursor-dev libxcursor1 libxrender-dev libxrender1 libxfixes-dev libxfixes3 libgl-dev libgl1 libglx-dev libglx0 xvfb libxfont2 x11proto-dev xtrans-dev libpng-dev zlib1g-dev libbrotli-dev libharfbuzz-dev libharfbuzz-gobject0 libharfbuzz-subset0 libgraphite2-dev libbz2-dev clang-format-19
+        "${forge_apt[@]}" download clang-19 libllvm19 libclang-cpp19 libclang-common-19-dev libclang1-19 llvm-19-linker-tools cmake cmake-data ninja-build libjsoncpp26 librhash1 libuv1t64 libasound2-dev libasound2t64 libfreetype-dev libfreetype6 libfontconfig-dev libfontconfig1 libx11-dev libx11-6 libxext-dev libxext6 libxinerama-dev libxinerama1 libxrandr-dev libxrandr2 libxcursor-dev libxcursor1 libxrender-dev libxrender1 libxfixes-dev libxfixes3 libgl-dev libgl1 libglx-dev libglx0 xvfb libxfont2 x11proto-dev xtrans-dev libpng-dev zlib1g-dev libbrotli-dev libharfbuzz-dev libharfbuzz-gobject0 libharfbuzz-subset0 libgraphite2-dev libbz2-dev clang-format-19 libcurl4-openssl-dev libcurl4t64 libp11-kit-dev libkrb5-dev krb5-multidev
         for forge_package in ./*.deb; do dpkg-deb -x "$forge_package" "$forge_tools/sysroot"; done
     )
 fi
@@ -32,6 +32,12 @@ export CMAKE_BUILD_PARALLEL_LEVEL=3
 export XDG_CACHE_HOME=/workspace/.tools/cache
 export XDG_CONFIG_HOME=/workspace/.tools/config
 ACTIVATE
+# HTTPS updater needs curl development headers. Prefer the already installed system package.
+if ! test -f "$forge_tools/sysroot/usr/include/x86_64-linux-gnu/curl/curl.h" || ! test -d "$forge_tools/sysroot/usr/include/p11-kit-1" || ! test -d "$forge_tools/sysroot/usr/include/mit-krb5"; then
+    forge_curl_download=$(mktemp -d "$forge_tools/curl.XXXXXX")
+    (cd "$forge_curl_download"; /usr/bin/apt-get -o "Dir::Etc::parts=$forge_tools/apt/conf" -o "Dir::Etc::sourcelist=$forge_tools/apt/sources.list" -o Dir::Etc::sourceparts=- -o "Dir::State::lists=$forge_tools/apt/lists" -o "Dir::Cache=$forge_tools/apt/cache" download libcurl4-openssl-dev libcurl4t64 libp11-kit-dev libkrb5-dev krb5-multidev; for forge_curl_package in ./*.deb; do dpkg-deb -x "$forge_curl_package" "$forge_tools/sysroot"; done)
+    rm -rf "$forge_curl_download"
+fi
 source "$forge_tools/activate.sh"
 clang++-19 --version
 cmake --version

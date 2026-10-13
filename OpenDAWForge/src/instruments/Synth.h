@@ -24,8 +24,8 @@ class Synth
         for (auto &s : samples_)
             s = {};
     }
-    void noteOn(int channel, int pitch, float velocity, InstrumentType type) noexcept;
-    void noteOff(int channel, int pitch) noexcept;
+    void noteOn(int channel, int pitch, float velocity, InstrumentType type, bool preview = false) noexcept;
+    void noteOff(int channel, int pitch, bool preview = false) noexcept;
     void allNotesOff() noexcept;
     void renderSample(const PlaybackSnapshot &, float &left, float &right,
                       std::array<float, maxChannels> *peaks = nullptr) noexcept;
@@ -37,6 +37,7 @@ class Synth
         Envelope envelope;
         Oscillator a, b, noise;
         int channel = 0, pitch = 60;
+        bool preview = false;
         InstrumentType type = InstrumentType::Synth;
         float velocity = 0, filter = 0;
         std::uint64_t age = 0;

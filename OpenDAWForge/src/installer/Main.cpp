@@ -1,6 +1,9 @@
 #include "Installation.h"
+#include <cerrno>
 #include <iostream>
 #include <juce_gui_extra/juce_gui_extra.h>
+#include <signal.h>
+#include <unistd.h>
 namespace forge::installer
 {
 juce::File payload()
@@ -185,6 +188,69 @@ class InstallerApplication final : public juce::JUCEApplication, private juce::T
             quit();
             return;
         }
+        if (args.size() >= 2 && (args[0] == "--update-install" || args[0] == "--update-prefix"))
+        {
+            const bool test = args[0] == "--update-prefix";
+            const auto root = juce::File(args[1]);
+            const Options options{test ? root.getChildFile("home")
+                                       : juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+                                  test ? root.getChildFile("program") : root, payload(), false};
+            const auto prior = juce::JSON::parse(options.destination.getChildFile("installation.json"));
+            if (prior["application"].toString() != "dev.lsfactory.installer")
+            {
+                setApplicationReturnValue(1);
+                std::cerr << "Update requires a managed installation" << std::endl;
+                quit();
+                return;
+            }
+            int pid = 0;
+            for (int i = 2; i + 1 < args.size(); ++i)
+                if (args[i] == "--wait-pid")
+                    pid = args[i + 1].getIntValue();
+            if (pid < 0 || pid == static_cast<int>(getpid()))
+            {
+                setApplicationReturnValue(1);
+                quit();
+                return;
+            }
+            updateWorker_.addJob(
+                [options, pid, test]
+                {
+                    auto result = juce::Result::ok();
+                    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 60000;
+                    while (pid > 0 && kill(pid, 0) == 0)
+                    {
+                        if (juce::Time::getMillisecondCounterHiRes() > deadline)
+                        {
+                            result = juce::Result::fail("Timed out waiting for application exit");
+                            break;
+                        }
+                        juce::Thread::sleep(100);
+                    }
+                    if (result.wasOk() && pid > 0 && errno != ESRCH)
+                        result = juce::Result::fail("Application exit could not be verified");
+                    Outcome installed{result, {}};
+                    if (result.wasOk())
+                        installed = install(options);
+                    if (installed.result.wasOk() && !test)
+                    {
+                        juce::ChildProcess process;
+                        if (!process.start(juce::StringArray{installed.launcher.getFullPathName()}, 0))
+                            installed.result = juce::Result::fail("Updated application could not restart");
+                    }
+                    std::cout << (installed.result.wasOk() ? "Automatic update completed"
+                                                           : installed.result.getErrorMessage().toStdString())
+                              << std::endl;
+                    juce::MessageManager::callAsync(
+                        [installed]
+                        {
+                            juce::JUCEApplication::getInstance()->setApplicationReturnValue(
+                                installed.result.wasOk() ? 0 : 1);
+                            juce::JUCEApplication::getInstance()->quit();
+                        });
+                });
+            return;
+        }
         if (args.size() >= 2 && args[0] == "--install-prefix")
         {
             Options options{juce::File(args[1]).getChildFile("home"),
@@ -218,6 +284,7 @@ class InstallerApplication final : public juce::JUCEApplication, private juce::T
     }
 
   private:
+    juce::ThreadPool updateWorker_{1};
     std::unique_ptr<Window> window_;
     juce::File screenshot_;
     void timerCallback() override

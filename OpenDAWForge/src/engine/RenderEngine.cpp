@@ -25,12 +25,18 @@ void RenderEngine::render(float *left, float *right, int samples) noexcept
     const bool play = requestedPlaying_.load();
     if (wasPlaying_ && !play)
         synth_.allNotesOff();
+    const auto seek = seek_.exchange(-1);
+    if (seek >= 0)
+    {
+        sample_ = static_cast<std::int64_t>(std::llround(beatsToSamples(seek, state_.bpm, rate_)));
+        synth_.allNotesOff();
+    }
     if (rewind_.exchange(false))
     {
         sample_ = 0;
         synth_.allNotesOff();
     }
-    if (play && (!wasPlaying_ || changed))
+    if (play && (!wasPlaying_ || changed || seek >= 0))
     {
         const double beat = samplesToBeats(sample_, state_.bpm, rate_);
         for (std::size_t i = 0; i < state_.noteCount; ++i)
@@ -45,13 +51,19 @@ void RenderEngine::render(float *left, float *right, int samples) noexcept
     LiveMidi midi;
     while (midi_.pop(midi))
     {
+        if (midi.channel < 0 || midi.channel >= static_cast<int>(maxChannels))
+            continue;
+        if (midi.on && midi.channel >= static_cast<int>(state_.channelCount))
+            continue;
         if (midi.on)
             synth_.noteOn(midi.channel, midi.pitch, midi.velocity,
-                          state_.channels[static_cast<std::size_t>(midi.channel)].instrument);
+                          state_.channels[static_cast<std::size_t>(midi.channel)].instrument,
+                          !midi.recordable);
         else
-            synth_.noteOff(midi.channel, midi.pitch);
-        if (recording_.load() && !captures_.push({midi.channel, midi.pitch, midi.velocity, midi.on,
-                                                  samplesToBeats(sample_, state_.bpm, rate_)}))
+            synth_.noteOff(midi.channel, midi.pitch, !midi.recordable);
+        if (midi.recordable && recording_.load() &&
+            !captures_.push({midi.channel, midi.pitch, midi.velocity, midi.on,
+                             samplesToBeats(sample_, state_.bpm, rate_)}))
             ++overflows_;
     }
     float peakL = 0, peakR = 0;

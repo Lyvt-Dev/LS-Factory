@@ -24,7 +24,7 @@ void Synth::allNotesOff() noexcept
     for (auto &d : delay_)
         d.reset();
 }
-void Synth::noteOn(int channel, int pitch, float velocity, InstrumentType type) noexcept
+void Synth::noteOn(int channel, int pitch, float velocity, InstrumentType type, bool preview) noexcept
 {
     if (channel < 0 || static_cast<std::size_t>(channel) >= maxChannels)
         return;
@@ -40,6 +40,7 @@ void Synth::noteOn(int channel, int pitch, float velocity, InstrumentType type) 
                                    [](auto &a, auto &b) { return a.age < b.age; });
     auto &v = *voice;
     v.channel = channel;
+    v.preview = preview;
     v.pitch = pitch;
     v.velocity = velocity;
     v.type = type;
@@ -55,10 +56,10 @@ void Synth::noteOn(int channel, int pitch, float velocity, InstrumentType type) 
         v.envelope.set(0.001f, type == InstrumentType::Hat ? 0.05f : 0.22f, 0, 0.04f);
     v.envelope.on();
 }
-void Synth::noteOff(int channel, int pitch) noexcept
+void Synth::noteOff(int channel, int pitch, bool preview) noexcept
 {
     for (auto &v : voices_)
-        if (v.envelope.active() && v.channel == channel && v.pitch == pitch &&
+        if (v.envelope.active() && v.channel == channel && v.pitch == pitch && v.preview == preview &&
             (v.type == InstrumentType::Synth || v.type == InstrumentType::Sampler))
             v.envelope.off();
 }
