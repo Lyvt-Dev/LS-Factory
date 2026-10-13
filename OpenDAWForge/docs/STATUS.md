@@ -1,4 +1,4 @@
-# Implementation boundary — 0.4.3
+# Implementation boundary — 0.4.4
 
 The full request describes a substantial multi-release DAW. This repository implements the initial native workstation rather than asserting that every requested subsystem is complete.
 

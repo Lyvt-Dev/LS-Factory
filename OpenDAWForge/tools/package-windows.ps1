@@ -26,15 +26,25 @@ try {
     $smokeDirectory = Join-Path $temporary 'installed-smoke'
     $smokeOut = Join-Path $temporary 'gui-out.log'
     $smokeErr = Join-Path $temporary 'gui-err.log'
-    $smoke = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--smoke-test', "`"$smokeDirectory`"") -PassThru -Wait -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
+    $smoke = Start-Process "$installed/LS Factory.exe" -ArgumentList @('--smoke-test', "`"$smokeDirectory`"") -PassThru -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
+    $smokeProcessHandle = $smoke.Handle
+    $smokeTimedOut = !$smoke.WaitForExit(60000)
+    if ($smokeTimedOut) { $smoke.Kill(); $smoke.WaitForExit() }
+    $smoke.Refresh()
     $smokeDiagnostic = ((Get-Content $smokeOut -Raw), (Get-Content $smokeErr -Raw)) -join "`n"
     Write-Host $smokeDiagnostic
-    if ($smoke.ExitCode -ne 0 -or !(Test-Path "$smokeDirectory/playlist.png")) { throw "Installed GUI/WAV smoke failed: exit=$($smoke.ExitCode); $smokeDiagnostic" }
+    if ($smokeTimedOut -or $smoke.ExitCode -ne 0 -or !(Test-Path "$smokeDirectory/playlist.png")) { throw "Installed GUI/WAV smoke failed: timeout=$smokeTimedOut, exit=$($smoke.ExitCode); $smokeDiagnostic" }
+    Write-Output "::notice title=Windows installed app::GUI/WAV/asynchronous Factory smoke passed"
     # Exercise the updater's wait-for-exit path and actual GUI relaunch.
     $userProject = Join-Path $installed 'user-session.odaw'
     'preserve' | Set-Content $userProject
     $oldProcess = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 3') -PassThru
-    $updated = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/LSFACTORYUPDATE=1', "/WAITPID=$($oldProcess.Id)", "/DIR=`"$installed`"") -PassThru -Wait
+    $updated = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/LSFACTORYUPDATE=1', "/WAITPID=$($oldProcess.Id)", "/DIR=`"$installed`"") -PassThru
+    # -Wait also waits for descendant processes, including the app deliberately relaunched by Setup.
+    # Wait only for the installer, then inspect and close the new app separately.
+    $installerProcessHandle = $updated.Handle
+    if (!$updated.WaitForExit(60000)) { $updated.Kill(); throw 'Update installer did not exit' }
+    $updated.Refresh()
     if ($updated.ExitCode -ne 0 -or (Get-Content $userProject -Raw).Trim() -ne 'preserve') { throw 'Automatic update/preservation smoke failed' }
     $restarted = $null
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
